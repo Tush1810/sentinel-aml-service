@@ -2,6 +2,8 @@ server:
   port: 8081
 
 spring:
+  config:
+    import: classpath:rules.yml
   application:
     name: sentinel-aml
   datasource:
@@ -38,8 +40,8 @@ logging:
     com.tushar.hackathon: DEBUG
 
 sentinel:
-  fx:
-    base-currency: INR
+  currency:
+    base: INR
     rates:
       INR: 1.0
       USD: 83.50

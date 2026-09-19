@@ -3,6 +3,7 @@ package com.tushar.hackathon.service.ingestion;
 import com.tushar.hackathon.exception.ResourceNotFoundException;
 import com.tushar.hackathon.exception.ValidationException;
 import com.tushar.hackathon.model.response.ingestion.BatchResult;
+import com.tushar.hackathon.model.response.alert.AlertSummary;
 import com.tushar.hackathon.model.response.ingestion.IngestResult;
 import com.tushar.hackathon.model.response.ingestion.RowError;
 import com.tushar.hackathon.repository.account.Account;
@@ -11,7 +12,8 @@ import com.tushar.hackathon.repository.txn.Transaction;
 import com.tushar.hackathon.repository.txn.TransactionRepository;
 import com.tushar.hackathon.repository.txn.TxnDirection;
 import com.tushar.hackathon.repository.txn.TxnType;
-import com.tushar.hackathon.service.fx.ExchangeRateService;
+import com.tushar.hackathon.service.ExchangeRateService;
+import com.tushar.hackathon.service.detection.DetectionEngine;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -40,22 +42,29 @@ public class TransactionIngestionService {
     private final TransactionRepository transactionRepository;
     private final AccountRepository accountRepository;
     private final ExchangeRateService exchangeRateService;
+    private final DetectionEngine detectionEngine;
 
     public TransactionIngestionService(
             TransactionRepository transactionRepository,
             AccountRepository accountRepository,
-            ExchangeRateService exchangeRateService) {
+            ExchangeRateService exchangeRateService,
+            DetectionEngine detectionEngine) {
         this.transactionRepository = transactionRepository;
         this.accountRepository = accountRepository;
         this.exchangeRateService = exchangeRateService;
+        this.detectionEngine = detectionEngine;
     }
 
     /** Incremental path: one transaction, rejected outright if invalid. */
     @Transactional
     public IngestResult ingestOne(IngestTransactionCommand command) {
         Transaction saved = transactionRepository.save(toTransaction(command));
-        log.debug("Ingested transaction {} on account {}", saved.getTxnRef(), command.accountRef());
-        return IngestResult.accepted(saved.getTxnRef(), saved.getId());
+        List<AlertSummary> alerts = detectionEngine.evaluate(saved).stream()
+                .map(AlertSummary::from)
+                .toList();
+        log.debug("Ingested transaction {} on account {}; alerts={}",
+                saved.getTxnRef(), command.accountRef(), alerts.size());
+        return new IngestResult(saved.getTxnRef(), "ACCEPTED", alerts);
     }
 
     /** Bulk path: best-effort, so one bad record cannot block the rest of the file. */
@@ -69,7 +78,7 @@ public class TransactionIngestionService {
         for (int i = 0; i < commands.size(); i++) {
             IngestTransactionCommand command = commands.get(i);
             try {
-                transactionRepository.save(toTransaction(command));
+                detectionEngine.evaluate(transactionRepository.save(toTransaction(command)));
                 accepted++;
             } catch (RuntimeException e) {
                 errors.add(new RowError(i + 1, command.txnRef(), null, e.getMessage()));

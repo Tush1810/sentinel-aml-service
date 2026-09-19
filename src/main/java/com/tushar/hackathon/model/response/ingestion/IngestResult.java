@@ -1,9 +1,8 @@
 package com.tushar.hackathon.model.response.ingestion;
 
-/** Outcome of a single incremental ingestion. */
-public record IngestResult(String txnRef, String status, Long transactionId) {
+import com.tushar.hackathon.model.response.alert.AlertSummary;
+import java.util.List;
 
-    public static IngestResult accepted(String txnRef, Long transactionId) {
-        return new IngestResult(txnRef, "ACCEPTED", transactionId);
-    }
+/** Outcome of a single incremental ingestion, including anything detection raised. */
+public record IngestResult(String txnRef, String status, List<AlertSummary> alerts) {
 }

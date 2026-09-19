@@ -1,4 +1,4 @@
-package com.tushar.hackathon.service.fx;
+package com.tushar.hackathon.service;
 
 import com.tushar.hackathon.exception.ValidationException;
 import java.math.BigDecimal;
@@ -7,26 +7,22 @@ import java.util.Locale;
 import org.springframework.stereotype.Service;
 
 /**
- * Normalizes every amount to the base currency so threshold rules compare like with like.
- * Conversion happens at ingestion, which keeps the detection rules free of FX concerns.
+ * Normalizes amounts to the base currency at ingestion, so detection rules compare like
+ * with like and never deal with currency conversion themselves.
  */
 @Service
 public class ExchangeRateService {
 
     private static final int BASE_SCALE = 2;
 
-    private final ExchangeRateProperties properties;
+    private final SentinelProperties properties;
 
-    public ExchangeRateService(ExchangeRateProperties properties) {
+    public ExchangeRateService(SentinelProperties properties) {
         this.properties = properties;
     }
 
-    public String baseCurrency() {
-        return properties.baseCurrency();
-    }
-
     public BigDecimal rateFor(String currency) {
-        BigDecimal rate = properties.rates().get(currency.toUpperCase(Locale.ROOT));
+        BigDecimal rate = properties.currency().rates().get(currency.toUpperCase(Locale.ROOT));
         if (rate == null) {
             throw new ValidationException("No exchange rate configured for currency " + currency);
         }

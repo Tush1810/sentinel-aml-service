@@ -1,0 +1,29 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: sentinel-aml
+  datasource:
+    url: ${SENTINEL_DB_URL:jdbc:postgresql://localhost:5432/sentinel}
+    username: ${SENTINEL_DB_USER:catalog}
+    password: ${SENTINEL_DB_PASSWORD:catalog}
+    driver-class-name: org.postgresql.Driver
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 100
+  jackson:
+    default-property-inclusion: non_null
+
+logging:
+  level:
+    com.tushar.hackathon: DEBUG

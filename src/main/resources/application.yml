@@ -27,3 +27,14 @@ spring:
 logging:
   level:
     com.tushar.hackathon: DEBUG
+
+sentinel:
+  fx:
+    base-currency: INR
+    rates:
+      INR: 1.0
+      USD: 83.50
+      EUR: 90.20
+      GBP: 105.40
+      AED: 22.74
+      SGD: 62.10

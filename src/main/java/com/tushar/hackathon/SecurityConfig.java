@@ -51,6 +51,7 @@ public class SecurityConfig {
                         .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/ingestion/**").hasRole(ADMIN)
                         .requestMatchers(HttpMethod.POST, "/api/v1/transactions/**").hasRole(ADMIN)
+                        .requestMatchers(HttpMethod.POST, "/api/v1/detection/**").hasRole(ADMIN)
                         .requestMatchers(HttpMethod.GET, "/api/v1/alerts/**").hasAnyRole(ANALYST, ADMIN)
                         .anyRequest().authenticated())
                 .httpBasic(basic -> {

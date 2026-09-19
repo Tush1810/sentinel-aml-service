@@ -1,20 +1,21 @@
 # Sentinel AML
 
-## 1. What it is
+## 1. What this service does
 
-Sentinel is an AML (anti-money-laundering) transaction monitoring prototype. It ingests
-customers, accounts, and transactions from a bank's core systems and serves the
-resulting risk-scored alerts to an analyst queue for investigation. Detection itself
-lives in a sibling repo, `sentinel-aml-engine`, which consumes Debezium change events
-for the `txn` table from Kafka and evaluates the rule book there.
+Sentinel is an AML (anti-money-laundering) transaction monitoring prototype. This service
+ingests customers, accounts, and transactions from a bank's core systems, then serves the
+resulting risk-scored alerts to an analyst queue. An analyst bundles alerts into a case and
+records one decision for that case. Detection itself lives in a sibling repo,
+`sentinel-aml-engine`. That engine consumes Debezium change events for the `txn` table from
+Kafka, evaluates the rule book, and writes the alerts back.
 
-## 2. Architecture
+## 2. Architecture: one ingestion path, detection elsewhere
 
-The code is layered `resource -> service -> repository`, with one deliberate design
+The code is layered `resource -> service -> repository`, around one deliberate design
 decision: **ingestion is transport-agnostic**. Three adapters (CSV upload, REST, Kafka)
-all translate their input into the same `IngestTransactionCommand` and hand it to
-`TransactionIngestionService`, which is the only place a transaction is persisted.
-No adapter makes an ingestion decision of its own.
+translate their input into the same `IngestTransactionCommand` and hand it to
+`TransactionIngestionService`, the only place a transaction is persisted. No adapter makes
+an ingestion decision of its own.
 
 ```
                     CSV upload            REST POST             Kafka topic
@@ -40,33 +41,42 @@ No adapter makes an ingestion decision of its own.
                                 (evaluates the rule book)
                                               |
                                               v
-                                   alert / alert_evidence
+                                 alert and alert_evidence
                                               |
                                               v
-                                     AlertResource
+                                       AlertResource
                               (analyst queue, GET /api/v1/alerts)
+                                              |
+                                              v
+                                       CaseResource
+                          (open, assign, dispose, POST /api/v1/cases)
 ```
 
-Package layout under `src/main/java/com/tushar/hackathon/`:
+The table below lists every package and root class under
+`src/main/java/com/tushar/sentinel/`.
 
-| Package | Role |
+| Package or class | Role |
 |---|---|
-| `resource/` | HTTP and Kafka adapters (`resource/ingestion`, `resource/ingestion/kafka`, `resource/alert`) |
-| `service/ingestion/` | Transport-neutral ingestion services (customer, account, transaction) + CSV parsing helpers |
-| `service/` | `ExchangeRateService` (currency normalization), `SentinelProperties` (typed config binding) |
-| `repository/` | JPA entities and Spring Data repositories, one sub-package per aggregate (`customer`, `account`, `txn`, `alert`, `amlcase`) |
-| `model/response/` | Read-only view/DTO records returned by the resources |
-| `exception/` | `ApiException` hierarchy + `GlobalExceptionHandler` mapping to a coded error response |
-| `SecurityConfig` | HTTP Basic + role-based route authorization |
+| `resource/` | HTTP and Kafka adapters: `resource/ingestion`, `resource/ingestion/kafka`, `resource/alert`, `resource/casemanagement`, `resource/dashboard` |
+| `service/ingestion/` | Transport-neutral ingestion services for customers, accounts, and transactions, plus the CSV helpers `CsvFile` and `CsvValues` |
+| `service/casemanagement/` | `CaseService`, which runs the investigation workflow and writes the audit trail |
+| `service/` | `ExchangeRateService` for currency normalization, `SentinelProperties` for typed config binding |
+| `repository/` | JPA entities and Spring Data repositories, one sub-package per aggregate: `customer`, `account`, `txn`, `alert`, `amlcase`, `auditlog` |
+| `model/response/` | Read-only records the resources return, grouped as `alert`, `casemanagement`, `dashboard`, `ingestion` |
+| `common/rest/response/` | `ErrorResponse`, the error body every failing endpoint returns |
+| `exception/` | The `ApiException` hierarchy and `GlobalExceptionHandler`, which maps each exception to an `ErrorResponse` carrying an `ErrorCode` |
+| `SecurityConfig` | HTTP Basic auth and role-based route authorization |
+| `SentinelApplication` | Spring Boot entry point |
 
-Currency normalization happens once, at ingestion (`ExchangeRateService` converts every
-amount to a base currency, `amount_base`), so the detection rules downstream compare
-like with like and never touch currency conversion themselves.
+`ExchangeRateService` converts every amount to the base currency once, at ingestion, and
+stores the result in `amount_base`. The detection rules downstream therefore compare like
+with like and never handle currency conversion themselves. The base currency and the rate
+table live under `sentinel.currency` in `src/main/resources/application.yml`.
 
-## 3. ERD
+## 3. Data model: seven core tables and an append-only audit log
 
-Table names use `txn` and `aml_case` instead of `transaction` and `case` because both
-are SQL reserved words.
+The tables are named `txn` and `aml_case` rather than `transaction` and `case`, because both
+of those are SQL reserved words.
 
 ```
  customer  1 ---- * account  1 ---- * txn
@@ -83,71 +93,99 @@ are SQL reserved words.
        (customer 1 ---- * aml_case)
 ```
 
-Cardinality in words:
+Read the cardinality as follows.
+
 - `customer` 1 --- * `account`
 - `account` 1 --- * `txn`
-- `customer` 1 --- * `alert` (an alert is always tied to a customer; `account_id` is nullable)
-- `alert` * --- * `txn` via `alert_evidence` (the transactions that caused the alert)
+- `customer` 1 --- * `alert`. An alert always belongs to a customer, and `account_id` is nullable.
+- `alert` * --- * `txn` through `alert_evidence`, the transactions that caused the alert.
 - `customer` 1 --- * `aml_case`
-- `aml_case` * --- * `alert` via `case_alert` (a case bundles the alerts an analyst investigates together)
+- `aml_case` * --- * `alert` through `case_alert`. A case bundles the alerts an analyst investigates as one decision.
+- `audit_log` has no foreign key to either table. Each row points at a case or an alert by the text column `entity_ref`.
 
 | Table | Key columns |
 |---|---|
 | `customer` | `id` PK, `customer_ref` unique, `kyc_status`, `risk_rating`, `politically_exposed` |
 | `account` | `id` PK, `account_ref` unique, `customer_id` FK -> customer, `account_status`, `currency`, `current_balance` |
 | `txn` | `id` PK, `txn_ref` unique, `account_id` FK -> account, `direction`, `amount`, `currency`, `amount_base`, `exchange_rate`, `counterparty_country`, `txn_timestamp` |
-| `alert` | `id` PK, `alert_ref` unique, `customer_id` FK, `account_id` FK (nullable), `rule_code`, `risk_score`, `severity`, `status`, `dedup_key` unique |
-| `alert_evidence` | `alert_id` FK, `txn_id` FK — composite PK (`alert_id`, `txn_id`) |
-| `aml_case` | `id` PK, `case_ref` unique, `customer_id` FK, `status`, `priority`, `disposition` |
-| `case_alert` | `case_id` FK, `alert_id` FK — composite PK (`case_id`, `alert_id`) |
+| `alert` | `id` PK, `alert_ref` unique, `customer_id` FK, `account_id` FK (nullable), `rule_code`, `typology`, `risk_score`, `severity`, `status`, `explanation`, `dedup_key` unique |
+| `alert_evidence` | `alert_id` FK, `txn_id` FK, composite PK (`alert_id`, `txn_id`) |
+| `aml_case` | `id` PK, `case_ref` unique, `customer_id` FK, `status`, `priority`, `assigned_to`, `disposition`, `disposition_reason`, `disposed_by`, `disposed_at` |
+| `case_alert` | `case_id` FK, `alert_id` FK, composite PK (`case_id`, `alert_id`) |
+| `audit_log` | `id` PK, `entity_type`, `entity_ref`, `from_status`, `to_status`, `actor`, `reason`, `occurred_at` |
 
-Notable constraints: `alert.risk_score` is checked between 0 and 100; `txn.amount` must
-be positive; `alert.dedup_key` is unique and is what actually enforces one-alert-per-pattern
-under concurrent evaluation, not application-level locking.
+Three constraints carry design weight. A check keeps `alert.risk_score` between 0 and 100.
+A second check keeps `txn.amount` positive. The unique constraint on `alert.dedup_key` is
+what enforces one alert per pattern when two evaluations of the same account run at once. No
+application-level lock does that work.
 
-## 4. Setup
+`audit_log` is append-only in the database, not only in application code. The trigger
+`trg_audit_log_append_only` raises an exception on any `UPDATE` or `DELETE`. An auditor can
+therefore trust the trail even when something other than this service holds a connection.
+
+## 4. Set up the infrastructure, then the app
 
 ### Prerequisites
 
-- Java 21 (`java -version`; on this machine `java_home -v 21` may resolve to the wrong
-  JDK — rely on `PATH` instead of overriding `JAVA_HOME`)
-- Maven (or use the included `mvnw` if present)
-- Docker, for Postgres and Kafka
+You need three things before you build.
 
-### Postgres and Kafka
+- Java 21. Check with `java -version`. On this machine `java_home -v 21` resolves to the wrong JDK, so rely on `PATH` instead of overriding `JAVA_HOME`.
+- Maven. This repo ships no Maven wrapper, so use the `mvn` on your `PATH`.
+- Docker, for Postgres and Kafka.
 
-Both run via Docker Compose in a sibling `personal-infra` directory (not part of this
-repo):
+### Start Postgres and Kafka
+
+Postgres and Kafka run as Docker containers defined outside this repo. Two Compose files
+named `personal-infra` exist, and only one of them defines a broker.
+
+- `/Users/tusharpruthi/Desktop/Practice/Hackathon/examples-staging/personal-infra/docker-compose.yml` defines both a `postgres` service and a `kafka` service. Start both from here.
+- `/Users/tusharpruthi/Desktop/Practice/Examples/personal-infra/docker-compose.yml` defines `postgres` only. Bringing that file up gives you a database but no broker, and `TransactionKafkaListener` then fails to reach `localhost:9092`.
+
+Both files sit in a directory named `personal-infra`, so Compose derives the same project
+name and the same container names from each: `personal-infra-postgres-1` and
+`personal-infra-kafka-1`. They also share the named volume `hackathon-postgres-data`. Treat
+the two files as one project. A Compose command run in one directory can act on a container
+started from the other.
+
+To start the database and the broker together, use the `examples-staging` copy.
 
 ```
-cd ../personal-infra
+cd /Users/tusharpruthi/Desktop/Practice/Hackathon/examples-staging/personal-infra
 docker compose up -d
 docker ps   # expect personal-infra-postgres-1 and personal-infra-kafka-1
 ```
 
-The app's default datasource points at database `sentinel` with user/password
-`catalog`/`catalog` (see `src/main/resources/application.yml`), matching that
-container's setup. Flyway (`V1__create_core_schema.sql`) creates the schema on
-first boot (`baseline-on-migrate: true`).
+The Compose file creates the database `catalog` with user `catalog` and password `catalog`.
+It does not create the `sentinel` database this service points at. To create that database
+on a fresh volume, run the following command once.
+
+```
+docker exec personal-infra-postgres-1 psql -U catalog -d postgres -c "CREATE DATABASE sentinel"
+```
+
+Flyway then runs on first boot with `baseline-on-migrate: true` and applies
+`V1__create_core_schema.sql`, `V2__seed_synthetic_data.sql`, and `V3__create_audit_log.sql`.
 
 ### Environment variables
 
-All have defaults suitable for local development; override for anything else.
+Every variable below has a default that suits local development. Override them anywhere else.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `SENTINEL_DB_URL` | `jdbc:postgresql://localhost:5432/sentinel` | Postgres JDBC URL |
 | `SENTINEL_DB_USER` | `catalog` | Postgres user |
 | `SENTINEL_DB_PASSWORD` | `catalog` | Postgres password |
-| `SENTINEL_KAFKA_ENABLED` | `true` | Enables the Kafka publish endpoint and listener |
+| `SENTINEL_KAFKA_ENABLED` | `true` | Registers the Kafka publish endpoint, the publisher, and the listener |
 | `SENTINEL_ANALYST_PASSWORD` | `analyst` | Password for the in-memory `analyst` user |
 | `SENTINEL_ADMIN_PASSWORD` | `admin` | Password for the in-memory `admin` user |
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Broker address |
 
-`KAFKA_BOOTSTRAP_SERVERS` (default `localhost:9092`) is also read from the environment
-by Spring Boot's standard Kafka autoconfiguration property, though it is not one of the
-`SENTINEL_*` variables above.
+`KAFKA_BOOTSTRAP_SERVERS` feeds Spring Boot's standard `spring.kafka.bootstrap-servers`
+property. It is the one variable in the table that carries no `SENTINEL_` prefix.
 
 ### Build and run
+
+Build the jar, then start the app either through Maven or from the jar.
 
 ```
 mvn clean package
@@ -156,40 +194,55 @@ mvn spring-boot:run
 java -jar target/sentinel-aml-service-1.0.0.jar
 ```
 
-The app listens on port **8081**. Interactive API documentation (springdoc) is served
-at `http://localhost:8081/swagger-ui/index.html`, with the raw OpenAPI spec at
-`/v3/api-docs` — both are public and need no credentials, while every `/api/v1/**`
-route still requires HTTP Basic auth.
+The app listens on port **8081**. springdoc serves interactive API documentation at
+`http://localhost:8081/swagger-ui/index.html` and the raw OpenAPI spec at `/v3/api-docs`.
+Both are public and need no credentials. Every `/api/v1/**` route still requires HTTP Basic
+auth.
 
-## 5. Detection
+## 5. Detection runs in sentinel-aml-engine, not here
 
-Detection is not part of this service. The rule book, and the engine that evaluates it,
-live in a sibling repo, `sentinel-aml-engine`, which consumes Debezium change events for
-the `txn` table from Kafka. Thresholds, windows, weights and the rules themselves are
-configured there, not in this repo's `application.yml`.
+This service holds no detection logic. The rule book, and the engine that evaluates it, live
+in the sibling repo `sentinel-aml-engine`. That engine consumes Debezium change events for
+the `txn` table from Kafka and writes the alerts this service serves. Thresholds, windows, and
+weights are configured there, not in this repo's `application.yml`.
 
-## 6. API
+## 6. API endpoints and the roles they need
 
-All endpoints require HTTP Basic auth. Two users exist: `analyst` (role `ANALYST`) and
-`admin` (role `ADMIN`), passwords from `SENTINEL_ANALYST_PASSWORD` /
-`SENTINEL_ADMIN_PASSWORD` (default `analyst` / `admin`).
+Every `/api/v1/**` endpoint requires HTTP Basic auth. Two users exist: `analyst` with role
+`ANALYST`, and `admin` with role `ADMIN`. Their passwords come from
+`SENTINEL_ANALYST_PASSWORD` and `SENTINEL_ADMIN_PASSWORD`, defaulting to `analyst` and
+`admin`.
 
 | Method | Path | Required role | Purpose |
 |---|---|---|---|
-| `POST` | `/api/v1/ingestion/customers` | ADMIN | Bulk-load customers from a CSV file (`multipart/form-data`, field `file`) |
-| `POST` | `/api/v1/ingestion/accounts` | ADMIN | Bulk-load accounts from a CSV file |
-| `POST` | `/api/v1/ingestion/transactions` | ADMIN | Bulk-load transactions from a CSV file |
-| `POST` | `/api/v1/ingestion/transactions/publish` | ADMIN | Publish a batch of transactions onto the Kafka topic instead of ingesting synchronously (only active when `SENTINEL_KAFKA_ENABLED=true`) |
-| `POST` | `/api/v1/transactions` | ADMIN | Ingest one transaction synchronously |
-| `POST` | `/api/v1/transactions/batch` | ADMIN | Ingest a JSON array of transactions synchronously, best-effort (bad rows reported, others still accepted) |
-| `GET` | `/api/v1/alerts` | ANALYST or ADMIN | Alert queue, highest risk first; optional `status` and `size` query params. Customer names are masked. |
-| `GET` | `/api/v1/alerts/{alertRef}` | ANALYST or ADMIN | Single alert detail. Customer name is masked for ANALYST, full for ADMIN. |
-| `GET` | `/swagger-ui/**`, `/swagger-ui.html` | none (public) | Interactive OpenAPI documentation UI |
+| `POST` | `/api/v1/ingestion/customers` | ADMIN | Load customers from a CSV file (`multipart/form-data`, field `file`) |
+| `POST` | `/api/v1/ingestion/accounts` | ADMIN | Load accounts from a CSV file |
+| `POST` | `/api/v1/ingestion/transactions` | ADMIN | Load transactions from a CSV file |
+| `POST` | `/api/v1/ingestion/transactions/publish` | ADMIN | Publish transactions onto the Kafka topic `sentinel.transactions` instead of ingesting them inline. Returns `202 Accepted` with a queued count. Registered only when `SENTINEL_KAFKA_ENABLED` is `true`. |
+| `POST` | `/api/v1/transactions` | ADMIN | Ingest one transaction. Returns `201 Created` and an `IngestResult` of `txnRef` and `status`. It reports no alerts, because detection runs elsewhere. |
+| `POST` | `/api/v1/transactions/batch` | ADMIN | Ingest a JSON array of transactions. The call is best-effort: bad rows come back in `BatchResult.errors()`, and the rest are still accepted. |
+| `GET` | `/api/v1/alerts` | ANALYST or ADMIN | Alert queue, highest risk first. Optional `status` and `size` query params. Customer names are masked. |
+| `GET` | `/api/v1/alerts/{alertRef}` | ANALYST or ADMIN | One alert. ADMIN sees the full customer name, ANALYST sees the masked name. |
+| `POST` | `/api/v1/cases` | ANALYST or ADMIN | Open a case over `alertRefs` at a `priority`. Returns `201 Created`. The alerts must all belong to one customer. |
+| `POST` | `/api/v1/cases/{caseRef}/assignment` | ANALYST or ADMIN | Assign the case to the `assignee` query param and move it to `IN_REVIEW` |
+| `POST` | `/api/v1/cases/{caseRef}/disposition` | ANALYST or ADMIN | Record a `disposition` and a `reason`, then close or escalate the case and its alerts |
+| `GET` | `/api/v1/cases` | ANALYST or ADMIN | Case queue, with optional `status` and `size` query params |
+| `GET` | `/api/v1/cases/{caseRef}` | ANALYST or ADMIN | One case, including its disposition and the analyst who made it |
+| `GET` | `/api/v1/cases/{caseRef}/audit` | ANALYST or ADMIN | Audit trail for the case and every alert it bundles, oldest first |
+| `GET` | `/api/v1/dashboard/summary` | ANALYST or ADMIN | Headline counts, plus alert counts by severity, by rule, and by status |
+| `GET` | `/api/v1/dashboard/customers` | ANALYST or ADMIN | Customers with their account refs and their transaction and alert counts, highest risk score first |
+| `GET` | `/api/v1/dashboard/customers/{customerRef}/transactions` | ANALYST or ADMIN | One customer's transaction timeline |
+| `GET` | `/swagger-ui/**`, `/swagger-ui.html` | none (public) | Interactive OpenAPI documentation |
 | `GET` | `/v3/api-docs/**` | none (public) | Raw OpenAPI spec |
 
-### curl examples
+A case moves through `OPEN`, `IN_REVIEW`, then either `CLOSED` or `ESCALATED_TO_SAR`. The
+disposition that closes it is one of `FALSE_POSITIVE`, `CLEARED`, or `ESCALATED_TO_SAR`.
+`CaseService` takes the actor for every transition from the authenticated principal, never
+from the request body, so a caller cannot forge the audit trail.
 
-Ingest one transaction (ADMIN):
+### How to call the API with curl
+
+To ingest one transaction as ADMIN, run the following command.
 
 ```
 curl -u admin:admin -X POST http://localhost:8081/api/v1/transactions \
@@ -206,14 +259,21 @@ curl -u admin:admin -X POST http://localhost:8081/api/v1/transactions \
       }'
 ```
 
-Bulk CSV upload of customers (ADMIN):
+The response confirms acceptance and nothing more.
+
+```
+{"txnRef":"TXN-1001","status":"ACCEPTED"}
+```
+
+To bulk-load customers from a CSV file as ADMIN, post the file on the `file` field.
 
 ```
 curl -u admin:admin -F "file=@customers.csv" \
   http://localhost:8081/api/v1/ingestion/customers
 ```
 
-Publish a batch to Kafka instead of ingesting inline (ADMIN):
+To publish a batch to Kafka instead of ingesting it inline, call the publish endpoint as
+ADMIN.
 
 ```
 curl -u admin:admin -X POST http://localhost:8081/api/v1/ingestion/transactions/publish \
@@ -221,48 +281,59 @@ curl -u admin:admin -X POST http://localhost:8081/api/v1/ingestion/transactions/
   -d '[{"txnRef":"TXN-2001","accountRef":"ACC-0001","direction":"CREDIT","txnType":"DEPOSIT","amount":15000,"currency":"INR","txnTimestamp":"2026-09-19T10:00:00Z"}]'
 ```
 
-Read the alert queue (ANALYST):
+To read the alert queue as ANALYST, filter by status and cap the page size.
 
 ```
 curl -u analyst:analyst "http://localhost:8081/api/v1/alerts?status=OPEN&size=20"
 ```
 
-Read one alert's detail, unmasked (ADMIN):
+To read one alert with the customer name unmasked, call it as ADMIN.
 
 ```
 curl -u admin:admin http://localhost:8081/api/v1/alerts/ALT-ABCD1234
 ```
 
-## 7. Security
+To open a case over two alerts as ANALYST, post their refs with a priority.
 
-Enforced with Spring Security HTTP Basic (`SecurityConfig`), stateless (no session,
-CSRF disabled since there is no session cookie to protect). Two in-memory users, one
-per role:
+```
+curl -u analyst:analyst -X POST http://localhost:8081/api/v1/cases \
+  -H "Content-Type: application/json" \
+  -d '{"alertRefs":["ALT-ABCD1234","ALT-EF567890"],"priority":"HIGH"}'
+```
+
+To close that case, post a disposition and the reason behind it.
+
+```
+curl -u analyst:analyst -X POST http://localhost:8081/api/v1/cases/CASE-1A2B3C4D/disposition \
+  -H "Content-Type: application/json" \
+  -d '{"disposition":"FALSE_POSITIVE","reason":"Salary credit from a known employer"}'
+```
+
+## 7. Security: HTTP Basic, two roles, masking on the server
+
+`SecurityConfig` enforces HTTP Basic auth over a stateless filter chain. It disables CSRF
+protection, because a stateless API issues no session cookie for CSRF to protect. Two
+in-memory users exist, one per role.
 
 | Role | Can do |
 |---|---|
-| `ANALYST` | `GET /api/v1/alerts/**` — read the alert queue and alert detail (customer names masked) |
-| `ADMIN` | Everything `ANALYST` can do, plus all `POST /api/v1/ingestion/**` and `POST /api/v1/transactions/**` endpoints, plus unmasked customer names in alert detail |
+| `ANALYST` | Read the alert queue and alert detail with customer names masked. Read the dashboard. Open, assign, and dispose cases, and read their audit trails. |
+| `ADMIN` | Everything `ANALYST` can do, plus every `POST /api/v1/ingestion/**` and `POST /api/v1/transactions/**` endpoint, plus unmasked customer names in alert detail. |
 
-Every other `/api/v1/**` request just needs to be authenticated as one of the two
-users (`anyRequest().authenticated()`). The exception is the OpenAPI documentation
-routes (`/swagger-ui/**`, `/swagger-ui.html`, `/v3/api-docs/**`), which are explicitly
-`permitAll()` — the spec itself is not sensitive, only the data behind it.
+Any other `/api/v1/**` request needs only an authenticated user, through
+`anyRequest().authenticated()`. The OpenAPI documentation routes are the exception:
+`/swagger-ui/**`, `/swagger-ui.html`, and `/v3/api-docs/**` are explicitly `permitAll()`.
+The spec itself is not sensitive. Only the data behind it is.
 
-Customer name masking (`AlertView`) is done server-side, not hidden client-side: the
-alert queue (`AlertView.masked`) always shows `FirstName L.`; only
-`GET /api/v1/alerts/{alertRef}` reveals the full `FirstName LastName` and only when the
-caller has role `ADMIN`.
+`AlertView` masks customer names on the server rather than hiding them in a client. The
+queue always uses `AlertView.masked`, which renders `FirstName L.`. Only
+`GET /api/v1/alerts/{alertRef}` calls `AlertView.full` for the complete
+`FirstName LastName`, and only when the caller holds role `ADMIN`.
 
 ## 8. Known limitations
 
-- **No dead-letter topic on the Kafka path.** `TransactionKafkaListener` logs and drops
-  any record it cannot deserialize or ingest; there is no retry topic or DLQ, so a bad
-  message is silently lost from the consumer's perspective (only visible in logs).
-- **No unit tests.** The `src/test` tree does not exist in this prototype.
-- **Alert-to-case workflow is schema-only.** `aml_case` and `case_alert` exist in the
-  Flyway migration and as JPA-mapped concepts, but there is no REST resource in this
-  build to create, assign, or disposition a case — only the alert queue is exposed.
-- Kafka ingestion is fire-and-forget: `POST /api/v1/ingestion/transactions/publish`
-  returns `202 Accepted` with just a queued count; there is no way to learn from that
-  call whether the message was ever consumed.
+- **The Kafka path has no dead-letter topic.** `TransactionKafkaListener` catches every exception, logs `Skipping unprocessable Kafka record`, and moves on. There is no retry topic and no DLQ, so a malformed payload leaves no trace outside the log.
+- **Testing stops at CSV parsing.** `src/test/java/com/tushar/sentinel/service/ingestion/CsvFileTest.java` holds two tests over `CsvFile`. One checks that a rejected row is reported against its own line number while the remaining rows still load. The other checks that a row whose column count does not match the header is rejected instead of parsed. Nothing else in the service has a test.
+- **Kafka ingestion is fire-and-forget.** `POST /api/v1/ingestion/transactions/publish` returns `202 Accepted` with a queued count. That response tells you nothing about whether a consumer ever handled the message.
+- **Two hard-coded users stand in for a user directory.** `SecurityConfig` builds an `InMemoryUserDetailsManager` with `analyst` and `admin`. Every analyst therefore shares one login, and `audit_log.actor` records `analyst` for all of their decisions.
+- **The dashboard aggregates in memory.** `DashboardResource.summary()` and `DashboardResource.customers()` both call `alertRepository.findAll()` and group the results in Java. That holds at prototype volumes. Push the grouping into SQL before the `alert` table grows large.

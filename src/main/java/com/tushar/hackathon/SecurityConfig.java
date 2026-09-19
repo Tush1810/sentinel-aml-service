@@ -53,6 +53,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/v1/transactions/**").hasRole(ADMIN)
                         .requestMatchers(HttpMethod.POST, "/api/v1/detection/**").hasRole(ADMIN)
                         .requestMatchers(HttpMethod.GET, "/api/v1/alerts/**").hasAnyRole(ANALYST, ADMIN)
+                        .requestMatchers(HttpMethod.GET, "/api/v1/dashboard/**").hasAnyRole(ANALYST, ADMIN)
                         // Analysts own the investigation workflow, so both reads and state changes.
                         .requestMatchers("/api/v1/cases/**").hasAnyRole(ANALYST, ADMIN)
                         .anyRequest().authenticated())

@@ -8,8 +8,6 @@ import org.springframework.data.jpa.repository.Query;
 
 public interface AlertRepository extends JpaRepository<Alert, Long> {
 
-    Optional<Alert> findByDedupKey(String dedupKey);
-
     Optional<Alert> findByAlertRef(String alertRef);
 
     /** Analyst queue: highest risk first, per business rule 7. */

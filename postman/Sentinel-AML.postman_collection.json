@@ -1,0 +1,1104 @@
+{
+  "info": {
+    "name": "Sentinel AML - Demo Walkthrough",
+    "description": "Run top to bottom. Steps 04-07 build a structuring pattern; 06 is where the first alert fires. alertRef and caseRef are captured automatically by test scripts, so the case steps need no copy-paste.\n\nUsers: analyst/analyst (read only), admin/admin (ingest + unmasked PII).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "analystUser",
+      "value": "analyst"
+    },
+    {
+      "key": "analystPassword",
+      "value": "analyst"
+    },
+    {
+      "key": "adminUser",
+      "value": "admin"
+    },
+    {
+      "key": "adminPassword",
+      "value": "admin"
+    },
+    {
+      "key": "alertRef",
+      "value": ""
+    },
+    {
+      "key": "caseRef",
+      "value": ""
+    },
+    {
+      "key": "runId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Dashboard summary (baseline)",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/dashboard/summary",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "dashboard",
+            "summary"
+          ]
+        },
+        "description": "Starting state. Note the alert count so the change after step 06 is obvious.",
+        "header": []
+      }
+    },
+    {
+      "name": "02 - Bulk load customers (CSV)",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/ingestion/customers",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "ingestion",
+            "customers"
+          ]
+        },
+        "description": "Customers must load before accounts: account.customer_id is a foreign key.\n\nBody tab -> form-data -> key 'file' (type File) -> select customers.csv",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/Users/tusharpruthi/Downloads/BlrAzenioJavahackathon/customers.csv"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "03 - Bulk load accounts (CSV)",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/ingestion/accounts",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "ingestion",
+            "accounts"
+          ]
+        },
+        "description": "Re-uploading either file returns rejected rows with reason 'Already ingested' - ingestion is idempotent.",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": "/Users/tusharpruthi/Downloads/BlrAzenioJavahackathon/accounts.csv"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "04 - Deposit 1 of 3 (no alert yet)",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transactions"
+          ]
+        },
+        "description": "First sub-threshold deposit. Returns \"alerts\": [] - one transaction is not a pattern.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"txnRef\": \"DEMO_1_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9500,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"2026-09-26T06:00:00Z\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "05 - Deposit 2 of 3 (still no alert)",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transactions"
+          ]
+        },
+        "description": "Second deposit. Still below the configured minimum count of 3.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"txnRef\": \"DEMO_2_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9700,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"2026-09-26T09:00:00Z\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "06 - Deposit 3 of 3 -> STRUCTURING fires",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transactions"
+          ]
+        },
+        "description": "THE MONEY SHOT. The third deposit completes the pattern and the alert comes back inline with risk score, evidence transaction ids and a plain-English explanation.\n\nSaves alertRef to a collection variable for the case steps.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"txnRef\": \"DEMO_3_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9200,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"2026-09-26T12:00:00Z\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "if (body.alerts && body.alerts.length) {",
+              "    pm.collectionVariables.set('alertRef', body.alerts[0].alertRef);",
+              "    console.log('captured alertRef', body.alerts[0].alertRef);",
+              "}",
+              "pm.test('alert raised', () => pm.expect(body.alerts.length).to.be.above(0));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 - Deposit 4 -> same alert updated (dedup)",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transactions"
+          ]
+        },
+        "description": "A fourth deposit in the same pattern returns the SAME alertRef with evidence grown 3 -> 4. One pattern, one alert - this is what stops a customer generating 50 redundant alerts.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"txnRef\": \"DEMO_4_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9900,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"2026-09-26T14:00:00Z\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "08 - High-risk jurisdiction -> fires on any amount",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transactions"
+          ]
+        },
+        "description": "Counterparty country AE is on the configured high-risk list. Fires regardless of amount - this is a legal position, not a risk judgement.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"txnRef\": \"DEMO_5_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"DEBIT\",\n  \"txnType\": \"WIRE\",\n  \"amount\": 5000,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"AE\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"2026-09-26T15:00:00Z\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "09 - Large transaction -> CTR threshold",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transactions"
+          ]
+        },
+        "description": "Single transaction at or above the reporting threshold. Mechanical, no suspicion required.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"txnRef\": \"DEMO_6_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"DEBIT\",\n  \"txnType\": \"TRANSFER\",\n  \"amount\": 30000,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"2026-09-26T16:00:00Z\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "10 - Alert queue (names MASKED)",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/alerts?size=20",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "alerts"
+          ],
+          "query": [
+            {
+              "key": "size",
+              "value": "20"
+            }
+          ]
+        },
+        "description": "Sorted highest risk first. Customer shows as 'Krishna S.' - PII is masked server side, not just hidden in a UI.",
+        "header": []
+      }
+    },
+    {
+      "name": "11 - Alert detail as ANALYST (masked)",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/alerts/{{alertRef}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "alerts",
+            "{{alertRef}}"
+          ]
+        },
+        "description": "Same endpoint as step 12. Analyst sees the masked name.",
+        "header": []
+      }
+    },
+    {
+      "name": "12 - Alert detail as ADMIN (unmasked)",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/alerts/{{alertRef}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "alerts",
+            "{{alertRef}}"
+          ]
+        },
+        "description": "Same endpoint, ADMIN role, full customer name. Business rule 8 enforced at the API layer.",
+        "header": []
+      }
+    },
+    {
+      "name": "13 - RBAC: analyst cannot ingest -> 403",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transactions"
+          ]
+        },
+        "description": "Expect 403 Forbidden. Authorisation is enforced on the API, so a UI is not the control.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"txnRef\": \"DEMO_X_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"DEPOSIT\",\n  \"amount\": 100,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"2026-09-26T17:00:00Z\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('analyst forbidden from ingesting', () => pm.response.to.have.status(403));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "14 - Customer transaction timeline",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/dashboard/customers/CUST_00001/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "dashboard",
+            "customers",
+            "CUST_00001",
+            "transactions"
+          ]
+        },
+        "description": "The behaviour behind the alert, newest first.",
+        "header": []
+      }
+    },
+    {
+      "name": "15 - Async path: publish to Kafka -> 202",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/ingestion/transactions/publish",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "ingestion",
+            "transactions",
+            "publish"
+          ]
+        },
+        "description": "Returns 202 QUEUED immediately. The Kafka listener calls the SAME ingestion service, so the transaction is persisted and rules run a moment later. Re-run step 10 to see the alert appear.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "[\n  {\n    \"txnRef\": \"DEMO_K1_{{runId}}\",\n    \"accountRef\": \"ACC_000002\",\n    \"direction\": \"CREDIT\",\n    \"txnType\": \"CASH_DEPOSIT\",\n    \"amount\": 9600,\n    \"currency\": \"INR\",\n    \"counterpartyCountry\": \"IN\",\n    \"channel\": \"BRANCH\",\n    \"txnTimestamp\": \"2026-09-26T18:00:00Z\"\n  }\n]",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "16 - Re-run detection over the whole book",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/detection/run",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "detection",
+            "run"
+          ]
+        },
+        "description": "Replays every stored transaction in business-time order. Needed after a bulk SQL load, and after tuning a rule threshold in rules.yml - which is how you demo 'configurable without code redeployment'.",
+        "header": []
+      }
+    },
+    {
+      "name": "17 - Open a case from the alert",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/cases",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "cases"
+          ]
+        },
+        "description": "Bundles alerts into one investigation. The alerts move to IN_REVIEW and an audit row is written with the actor's identity taken from the credentials, never the request body.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"alertRefs\": [\n    \"{{alertRef}}\"\n  ],\n  \"priority\": \"HIGH\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('caseRef', body.caseRef);",
+              "console.log('captured caseRef', body.caseRef);",
+              "pm.test('case opened', () => pm.expect(body.status).to.eql('OPEN'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "18 - Assign the case to an analyst",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/cases/{{caseRef}}/assignment?assignee=analyst",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "cases",
+            "{{caseRef}}",
+            "assignment"
+          ],
+          "query": [
+            {
+              "key": "assignee",
+              "value": "analyst"
+            }
+          ]
+        },
+        "description": "Moves the case to IN_REVIEW and records who assigned it.",
+        "header": []
+      }
+    },
+    {
+      "name": "19 - Dispose the case (as the analyst)",
+      "request": {
+        "method": "POST",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/cases/{{caseRef}}/disposition",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "cases",
+            "{{caseRef}}",
+            "disposition"
+          ]
+        },
+        "description": "Closed by a DIFFERENT actor than the one who opened it - the audit trail shows both. Try ESCALATED_TO_SAR instead to show the regulatory path.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"disposition\": \"CLEARED\",\n  \"reason\": \"Counterparty is a verified trade partner; invoices provided and funds match a declared export contract.\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "20 - Immutable audit trail",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/cases/{{caseRef}}/audit",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "cases",
+            "{{caseRef}}",
+            "audit"
+          ]
+        },
+        "description": "Every state transition with actor and timestamp. The table is append-only, enforced by a Postgres trigger: UPDATE and DELETE both raise.",
+        "header": []
+      }
+    },
+    {
+      "name": "21 - Alert STILL EXISTS after clearing",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/alerts/{{alertRef}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "alerts",
+            "{{alertRef}}"
+          ]
+        },
+        "description": "Business rule 6: cleared alerts are never deleted. Status is CLOSED, the evidence and explanation remain for audit.",
+        "header": []
+      }
+    },
+    {
+      "name": "22 - Case list",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/cases",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "cases"
+          ]
+        },
+        "description": "All investigations.",
+        "header": []
+      }
+    },
+    {
+      "name": "23 - No credentials -> 401",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "noauth"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/alerts",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "alerts"
+          ]
+        },
+        "description": "No Authorization header at all. Expect 401 Unauthorized - the API is closed by default, not merely hidden behind a UI.",
+        "header": []
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('rejected without credentials', () => pm.response.to.have.status(401));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "24 - Dashboard summary (after)",
+      "request": {
+        "method": "GET",
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/dashboard/summary",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "dashboard",
+            "summary"
+          ]
+        },
+        "description": "Closing shot. Compare against step 01: alerts grouped by severity, rule and status - this is what the risk heatmap is drawn from.",
+        "header": []
+      }
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// One id per run so transaction references stay unique and the demo can be replayed.",
+          "if (!pm.collectionVariables.get('runId')) {",
+          "    pm.collectionVariables.set('runId', Date.now().toString().slice(-6));",
+          "}"
+        ]
+      }
+    }
+  ]
+}

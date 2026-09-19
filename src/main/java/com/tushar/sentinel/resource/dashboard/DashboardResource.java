@@ -1,13 +1,16 @@
 package com.tushar.sentinel.resource.dashboard;
 
+import com.tushar.sentinel.model.response.dashboard.CustomerView;
 import com.tushar.sentinel.model.response.dashboard.DashboardSummary;
 import com.tushar.sentinel.model.response.dashboard.TransactionView;
 import com.tushar.sentinel.repository.account.AccountRepository;
 import com.tushar.sentinel.repository.alert.Alert;
 import com.tushar.sentinel.repository.alert.AlertRepository;
 import com.tushar.sentinel.repository.alert.AlertStatus;
+import com.tushar.sentinel.repository.customer.Customer;
 import com.tushar.sentinel.repository.customer.CustomerRepository;
 import com.tushar.sentinel.repository.txn.TransactionRepository;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -56,6 +59,35 @@ public class DashboardResource {
                 countBy(alerts, alert -> alert.getSeverity().name()),
                 countBy(alerts, Alert::getRuleCode),
                 countBy(alerts, alert -> alert.getStatus().name()));
+    }
+
+    /** Customer list for its own tab, with per-customer transaction and alert counts. */
+    @GetMapping("/customers")
+    public List<CustomerView> customers() {
+        List<Alert> alerts = alertRepository.findAll();
+        return customerRepository.findAll().stream()
+                .map(customer -> toView(customer, alerts))
+                .sorted(Comparator.comparingInt(CustomerView::highestRiskScore).reversed())
+                .toList();
+    }
+
+    private CustomerView toView(Customer customer, List<Alert> alerts) {
+        List<Alert> theirs = alerts.stream()
+                .filter(alert -> alert.getCustomer().getId().equals(customer.getId()))
+                .toList();
+        return new CustomerView(
+                customer.getCustomerRef(),
+                customer.getFirstName() + " " + customer.getLastName(),
+                customer.getCity(),
+                customer.getCustomerSegment(),
+                customer.getKycStatus().name(),
+                customer.getRiskRating().name(),
+                customer.isPoliticallyExposed(),
+                accountRepository.findByCustomerId(customer.getId()).stream()
+                        .map(account -> account.getAccountRef()).sorted().toList(),
+                transactionRepository.countByCustomerId(customer.getId()),
+                theirs.size(),
+                theirs.stream().mapToInt(Alert::getRiskScore).max().orElse(0));
     }
 
     @GetMapping("/customers/{customerRef}/transactions")

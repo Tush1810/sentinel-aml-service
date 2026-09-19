@@ -2,8 +2,6 @@ server:
   port: 8081
 
 spring:
-  config:
-    import: classpath:rules.yml
   application:
     name: sentinel-aml
   datasource:

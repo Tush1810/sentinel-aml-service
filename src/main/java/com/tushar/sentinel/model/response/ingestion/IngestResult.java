@@ -1,8 +1,8 @@
 package com.tushar.sentinel.model.response.ingestion;
 
-import com.tushar.sentinel.model.response.alert.AlertSummary;
-import java.util.List;
-
-/** Outcome of a single incremental ingestion, including anything detection raised. */
-public record IngestResult(String txnRef, String status, List<AlertSummary> alerts) {
+/**
+ * Outcome of a single incremental ingestion. Detection now runs asynchronously in a separate
+ * service, so this response only confirms the transaction was accepted; it cannot report alerts.
+ */
+public record IngestResult(String txnRef, String status) {
 }

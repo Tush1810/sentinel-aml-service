@@ -2,19 +2,16 @@ package com.tushar.sentinel.service.ingestion;
 
 import com.tushar.sentinel.exception.ResourceNotFoundException;
 import com.tushar.sentinel.exception.ValidationException;
-import com.tushar.sentinel.model.response.alert.AlertSummary;
 import com.tushar.sentinel.model.response.ingestion.BatchResult;
 import com.tushar.sentinel.model.response.ingestion.IngestResult;
 import com.tushar.sentinel.model.response.ingestion.RowError;
 import com.tushar.sentinel.repository.account.Account;
 import com.tushar.sentinel.repository.account.AccountRepository;
-import com.tushar.sentinel.repository.alert.Alert;
 import com.tushar.sentinel.repository.txn.Transaction;
 import com.tushar.sentinel.repository.txn.TransactionRepository;
 import com.tushar.sentinel.repository.txn.TxnDirection;
 import com.tushar.sentinel.repository.txn.TxnType;
 import com.tushar.sentinel.service.ExchangeRateService;
-import com.tushar.sentinel.service.detection.DetectionEngine;
 import java.io.InputStream;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -41,26 +38,22 @@ public class TransactionIngestionService {
     private final TransactionRepository transactionRepository;
     private final AccountRepository accountRepository;
     private final ExchangeRateService exchangeRateService;
-    private final DetectionEngine detectionEngine;
 
     public TransactionIngestionService(
             TransactionRepository transactionRepository,
             AccountRepository accountRepository,
-            ExchangeRateService exchangeRateService,
-            DetectionEngine detectionEngine) {
+            ExchangeRateService exchangeRateService) {
         this.transactionRepository = transactionRepository;
         this.accountRepository = accountRepository;
         this.exchangeRateService = exchangeRateService;
-        this.detectionEngine = detectionEngine;
     }
 
     /** Incremental path: one transaction, rejected outright if invalid. */
     @Transactional
     public IngestResult ingestOne(IngestTransactionCommand command) {
-        List<AlertSummary> alerts = ingest(command).stream().map(AlertSummary::from).toList();
-        log.debug("Ingested transaction {} on account {}; alerts={}",
-                command.txnRef(), command.accountRef(), alerts.size());
-        return new IngestResult(command.txnRef(), "ACCEPTED", alerts);
+        ingest(command);
+        log.debug("Ingested transaction {} on account {}", command.txnRef(), command.accountRef());
+        return new IngestResult(command.txnRef(), "ACCEPTED");
     }
 
     /** Bulk path: best-effort, so one bad record cannot block the rest of the payload. */
@@ -96,8 +89,8 @@ public class TransactionIngestionService {
         return result;
     }
 
-    private List<Alert> ingest(IngestTransactionCommand command) {
-        return detectionEngine.evaluate(transactionRepository.save(toTransaction(command)));
+    private void ingest(IngestTransactionCommand command) {
+        transactionRepository.save(toTransaction(command));
     }
 
     private Transaction toTransaction(IngestTransactionCommand command) {

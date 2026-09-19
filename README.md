@@ -3,18 +3,18 @@
 ## 1. What it is
 
 Sentinel is an AML (anti-money-laundering) transaction monitoring prototype. It ingests
-customers, accounts, and transactions from a bank's core systems, runs a set of
-configurable detection rules against every transaction as it arrives, and raises
-risk-scored alerts carrying a human-readable explanation of why each one fired.
-Alerts feed an analyst queue for investigation.
+customers, accounts, and transactions from a bank's core systems and serves the
+resulting risk-scored alerts to an analyst queue for investigation. Detection itself
+lives in a sibling repo, `sentinel-aml-engine`, which consumes Debezium change events
+for the `txn` table from Kafka and evaluates the rule book there.
 
 ## 2. Architecture
 
 The code is layered `resource -> service -> repository`, with one deliberate design
 decision: **ingestion is transport-agnostic**. Three adapters (CSV upload, REST, Kafka)
 all translate their input into the same `IngestTransactionCommand` and hand it to
-`TransactionIngestionService`, which is the only place a transaction is persisted and
-scored. No adapter makes an ingestion decision of its own.
+`TransactionIngestionService`, which is the only place a transaction is persisted.
+No adapter makes an ingestion decision of its own.
 
 ```
                     CSV upload            REST POST             Kafka topic
@@ -30,13 +30,14 @@ scored. No adapter makes an ingestion decision of its own.
                               (currency normalization, persist)
                                               |
                                               v
-                                     DetectionEngine
-                              (evaluates every enabled rule
-                               from rules.yml against the txn)
+                                            txn
                                               |
                                               v
-                                       AlertService
-                              (risk score, severity, dedup)
+                            Debezium change events on Kafka
+                                              |
+                                              v
+                                   sentinel-aml-engine
+                                (evaluates the rule book)
                                               |
                                               v
                                    alert / alert_evidence
@@ -52,7 +53,6 @@ Package layout under `src/main/java/com/tushar/hackathon/`:
 |---|---|
 | `resource/` | HTTP and Kafka adapters (`resource/ingestion`, `resource/ingestion/kafka`, `resource/alert`) |
 | `service/ingestion/` | Transport-neutral ingestion services (customer, account, transaction) + CSV parsing helpers |
-| `service/detection/` | `DetectionEngine` (rule evaluation) and `AlertService` (scoring, dedup) |
 | `service/` | `ExchangeRateService` (currency normalization), `SentinelProperties` (typed config binding) |
 | `repository/` | JPA entities and Spring Data repositories, one sub-package per aggregate (`customer`, `account`, `txn`, `alert`, `amlcase`) |
 | `model/response/` | Read-only view/DTO records returned by the resources |
@@ -60,8 +60,8 @@ Package layout under `src/main/java/com/tushar/hackathon/`:
 | `SecurityConfig` | HTTP Basic + role-based route authorization |
 
 Currency normalization happens once, at ingestion (`ExchangeRateService` converts every
-amount to a base currency, `amount_base`), so every detection rule compares like with
-like and never touches currency conversion itself.
+amount to a base currency, `amount_base`), so the detection rules downstream compare
+like with like and never touch currency conversion themselves.
 
 ## 3. ERD
 
@@ -161,60 +161,12 @@ at `http://localhost:8081/swagger-ui/index.html`, with the raw OpenAPI spec at
 `/v3/api-docs` — both are public and need no credentials, while every `/api/v1/**`
 route still requires HTTP Basic auth.
 
-## 5. Rule configuration
+## 5. Detection
 
-This is the core of the design: **detection rules live entirely in
-`src/main/resources/rules.yml`**, bound at startup into typed records
-(`SentinelProperties.Rule`) via `@ConfigurationProperties`. Tuning a threshold, a
-window, a weight, or adding a brand-new rule is a YAML edit — no Java code, no
-recompilation. `DetectionEngine` reduces every rule to one of four reusable shapes and
-switches on `type`:
-
-| Type | What it measures | Rules using it |
-|---|---|---|
-| `SINGLE_TRANSACTION` | A SpEL `condition` evaluated against the one incoming transaction | `CTR_THRESHOLD`, `HIGH_RISK_JURISDICTION` |
-| `WINDOWED_COUNT` | Count (and sum) of transactions matching a `filter` within `window-hours` on the same account | `STRUCTURING`, `ROUND_NUMBER` |
-| `INFLOW_OUTFLOW_RATIO` | Ratio of outbound to inbound money on an account within `window-hours` | `RAPID_MOVEMENT` |
-| `BASELINE_DEVIATION` | Recent activity vs. a customer's own rolling daily average over `baseline-days` | `BEHAVIORAL_DEVIATION` |
-
-### YAML fields
-
-| Field | Meaning |
-|---|---|
-| `code` | Unique rule identifier, stored on the alert (`alert.rule_code`) |
-| `typology` | Human label for the AML pattern (stored on the alert, shown to analysts) |
-| `enabled` | Rule is skipped entirely by `DetectionEngine` when `false` |
-| `weight` | Base risk score (0-100) contributed if the rule fires, before customer risk uplifts |
-| `type` | One of the four shapes above |
-| `scope` | `ACCOUNT` or `CUSTOMER` — which entity the time window is computed over |
-| `condition` / `filter` | SpEL expression evaluated against a `Transaction` entity (e.g. `amountBase`, `counterpartyCountry`) |
-| `threshold` | Meaning depends on `type`: minimum amount, minimum count, minimum ratio (%), or a multiplier of the baseline |
-| `window-hours` | Lookback window size for windowed/ratio/deviation rules |
-| `baseline-days` | Historical period used to compute a customer's daily average (`BASELINE_DEVIATION` only) |
-| `min-baseline-txns` | Minimum historical transactions required before a baseline is trusted (`BASELINE_DEVIATION` only) |
-| `explanation` | Template string rendered with rule-specific placeholders (e.g. `{amount}`, `{account}`, `{count}`) and stored on the alert |
-
-### Worked example, from `rules.yml`
-
-```yaml
-- code: STRUCTURING              # unique id, becomes alert.rule_code
-  typology: Structuring / Smurfing
-  enabled: true                  # flip to false to disable without deleting
-  weight: 60                     # base risk score contribution
-  type: WINDOWED_COUNT           # count matching txns in a rolling window
-  scope: ACCOUNT                 # window is per-account
-  window-hours: 24               # look back 24 hours from the triggering txn
-  filter: "amountBase >= 9000 and amountBase <= 9999"   # SpEL over each candidate txn
-  threshold: 3                   # need >= 3 matching txns in the window to fire
-  explanation: "{count} transactions totalling {total} on {account} within {window} hours, each just below the reporting threshold."
-```
-
-This detects classic structuring: three or more deposits each just under the $10,000
-CTR threshold, within a day, on the same account.
-
-**Rules are read once at application startup.** Editing `rules.yml` requires an
-application **restart** to take effect — there is no live/hot reload — but never
-requires a code change or a rebuild.
+Detection is not part of this service. The rule book, and the engine that evaluates it,
+live in a sibling repo, `sentinel-aml-engine`, which consumes Debezium change events for
+the `txn` table from Kafka. Thresholds, windows, weights and the rules themselves are
+configured there, not in this repo's `application.yml`.
 
 ## 6. API
 
@@ -226,9 +178,9 @@ All endpoints require HTTP Basic auth. Two users exist: `analyst` (role `ANALYST
 |---|---|---|---|
 | `POST` | `/api/v1/ingestion/customers` | ADMIN | Bulk-load customers from a CSV file (`multipart/form-data`, field `file`) |
 | `POST` | `/api/v1/ingestion/accounts` | ADMIN | Bulk-load accounts from a CSV file |
-| `POST` | `/api/v1/ingestion/transactions` | ADMIN | Bulk-load transactions from a CSV file (runs detection on each accepted row) |
+| `POST` | `/api/v1/ingestion/transactions` | ADMIN | Bulk-load transactions from a CSV file |
 | `POST` | `/api/v1/ingestion/transactions/publish` | ADMIN | Publish a batch of transactions onto the Kafka topic instead of ingesting synchronously (only active when `SENTINEL_KAFKA_ENABLED=true`) |
-| `POST` | `/api/v1/transactions` | ADMIN | Ingest one transaction synchronously; returns any alerts it raised |
+| `POST` | `/api/v1/transactions` | ADMIN | Ingest one transaction synchronously |
 | `POST` | `/api/v1/transactions/batch` | ADMIN | Ingest a JSON array of transactions synchronously, best-effort (bad rows reported, others still accepted) |
 | `GET` | `/api/v1/alerts` | ANALYST or ADMIN | Alert queue, highest risk first; optional `status` and `size` query params. Customer names are masked. |
 | `GET` | `/api/v1/alerts/{alertRef}` | ANALYST or ADMIN | Single alert detail. Customer name is masked for ANALYST, full for ADMIN. |
@@ -302,32 +254,8 @@ alert queue (`AlertView.masked`) always shows `FirstName L.`; only
 `GET /api/v1/alerts/{alertRef}` reveals the full `FirstName LastName` and only when the
 caller has role `ADMIN`.
 
-## 8. Detection rules implemented
+## 8. Known limitations
 
-| Code | Typology | Trips when | Business rule satisfied |
-|---|---|---|---|
-| `CTR_THRESHOLD` | Threshold Reporting | A single transaction's base-currency amount is >= 10,000 | Currency Transaction Report threshold monitoring |
-| `HIGH_RISK_JURISDICTION` | High-Risk Jurisdiction | Counterparty country is one of `IR, KP, SY, MM, AF, YE, AE` | Sanctioned/high-risk jurisdiction screening |
-| `STRUCTURING` | Structuring / Smurfing | 3+ transactions on an account within 24h, each between 9,000 and 9,999 | Detects deliberate sub-threshold splitting to avoid CTR reporting |
-| `ROUND_NUMBER` | Round-Number Pattern | 3+ transactions on an account within 168h (7 days), each >= 10,000 and an exact multiple of 10,000 | Flags suspiciously round, repeated large transfers |
-| `RAPID_MOVEMENT` | Rapid Movement of Funds | Outflow is >= 80% of inflow on an account within 48h | Layering: funds not left to rest before moving on |
-| `BEHAVIORAL_DEVIATION` | Behavioural Deviation | A customer's activity in the last 24h exceeds 3x their 90-day daily average (min. 5 historical transactions required) | Deviation from established customer behavior baseline |
-
-Each alert's risk score starts at the rule's `weight` and is uplifted for a
-politically-exposed customer (+15), HIGH risk rating (+10) or MEDIUM risk rating (+5),
-and non-VERIFIED KYC status (+10), capped at 100. Severity bands: CRITICAL >= 85,
-HIGH >= 70, MEDIUM >= 50, else LOW.
-
-## 9. Known limitations
-
-- **No live rule reload.** `rules.yml` is bound once at startup via
-  `@ConfigurationProperties`; changing it requires an application restart (no code
-  change or rebuild needed, but the process must come back up).
-- **`RAPID_MOVEMENT` aggregates inflow and outflow independently over the window rather
-  than matching each deposit to its corresponding outflow.** Because of this, the
-  reported ratio can exceed 100% (e.g. an outflow funded partly by a pre-existing
-  balance rather than only the window's inflow) — it is a directional signal, not an
-  exact traced-funds ratio.
 - **No dead-letter topic on the Kafka path.** `TransactionKafkaListener` logs and drops
   any record it cannot deserialize or ingest; there is no retry topic or DLQ, so a bad
   message is silently lost from the consumer's perspective (only visible in logs).
@@ -337,4 +265,4 @@ HIGH >= 70, MEDIUM >= 50, else LOW.
   build to create, assign, or disposition a case — only the alert queue is exposed.
 - Kafka ingestion is fire-and-forget: `POST /api/v1/ingestion/transactions/publish`
   returns `202 Accepted` with just a queued count; there is no way to learn from that
-  call whether the message was ever consumed or whether it raised any alerts.
+  call whether the message was ever consumed.

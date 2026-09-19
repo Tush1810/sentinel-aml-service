@@ -51,8 +51,8 @@ public class SecurityConfig {
                         .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/ingestion/**").hasRole(ADMIN)
                         .requestMatchers(HttpMethod.POST, "/api/v1/transactions/**").hasRole(ADMIN)
+                        .requestMatchers(HttpMethod.POST, "/api/v1/customers/**").hasRole(ADMIN)
                         // Demo aid: creating customers and replaying patterns is an admin action.
-                        .requestMatchers("/api/v1/simulation/**").hasRole(ADMIN)
                         .requestMatchers(HttpMethod.GET, "/api/v1/alerts/**").hasAnyRole(ANALYST, ADMIN)
                         .requestMatchers(HttpMethod.GET, "/api/v1/dashboard/**").hasAnyRole(ANALYST, ADMIN)
                         // Analysts own the investigation workflow, so both reads and state changes.

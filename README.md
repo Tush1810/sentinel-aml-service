@@ -227,6 +227,8 @@ Every `/api/v1/**` endpoint requires HTTP Basic auth. Two users exist: `analyst`
 | `POST` | `/api/v1/ingestion/transactions/publish` | ADMIN | Publish transactions onto the Kafka topic `sentinel.transactions` instead of ingesting them inline. Returns `202 Accepted` with a queued count. Registered only when `SENTINEL_KAFKA_ENABLED` is `true`. |
 | `POST` | `/api/v1/transactions` | ADMIN | Ingest one transaction. Returns `201 Created` and an `IngestResult` of `txnRef` and `status`. It reports no alerts, because detection runs elsewhere. |
 | `POST` | `/api/v1/transactions/batch` | ADMIN | Ingest a JSON array of transactions. The call is best-effort: bad rows come back in `BatchResult.errors()`, and the rest are still accepted. |
+| `POST` | `/api/v1/customers` | ADMIN | Create one customer together with an opening account. Only `firstName`, `lastName`, `politicallyExposed` and `kycVerified` are taken from the caller; the rest of the KYC record is defaulted. Returns `201 Created`. |
+| `POST` | `/api/v1/customers/{customerRef}/accounts` | ADMIN | Add another account to an existing customer. Returns `201 Created`. |
 | `GET` | `/api/v1/alerts` | ANALYST or ADMIN | Alert queue, highest risk first. Optional `status` and `size` query params. Customer names are masked. |
 | `GET` | `/api/v1/alerts/{alertRef}` | ANALYST or ADMIN | One alert. ADMIN sees the full customer name, ANALYST sees the masked name. |
 | `POST` | `/api/v1/cases` | ANALYST or ADMIN | Open a case over `alertRefs` at a `priority`. Returns `201 Created`. The alerts must all belong to one customer. |

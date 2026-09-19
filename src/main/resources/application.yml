@@ -23,6 +23,15 @@ spring:
           batch_size: 100
   jackson:
     default-property-inclusion: non_null
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: sentinel-ingestion
+      auto-offset-reset: earliest
+      properties:
+        spring.json.trusted.packages: "com.tushar.hackathon.*"
+    producer:
+      acks: all
 
 logging:
   level:
@@ -38,3 +47,7 @@ sentinel:
       GBP: 105.40
       AED: 22.74
       SGD: 62.10
+
+  kafka:
+    enabled: ${SENTINEL_KAFKA_ENABLED:true}
+    topic: sentinel.transactions

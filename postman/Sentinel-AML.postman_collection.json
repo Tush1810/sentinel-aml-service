@@ -1,0 +1,1591 @@
+{
+  "info": {
+    "name": "Sentinel AML - Demo Walkthrough",
+    "description": "End-to-end walkthrough of Sentinel AML.\n\nDetection does NOT run during ingestion. sentinel-aml-service stores the transaction and returns a reference and a status. A Debezium connector reads the row off the Postgres write-ahead log, publishes it to Kafka, and sentinel-aml-engine evaluates the rule book and writes the alert. Alerts therefore appear a moment after the transaction is posted, not in its response.\n\nRun the requests in order. Steps 02 to 10 create the data, step 11 reads the alerts the engine raised, and steps 19 to 25 walk an alert through the case workflow to a SAR escalation and its audit trail.\n\nIf step 11 finds no alerts, the engine has not consumed the change events yet. Send it again. If it never finds any, check that the engine is running and that the connector at localhost:8083 reports RUNNING.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Transactions need a business timestamp, and every run needs unique references.",
+          "pm.collectionVariables.set('now', new Date().toISOString());",
+          "if (!pm.collectionVariables.get('runId')) {",
+          "  pm.collectionVariables.set('runId', Date.now());",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "analystUser",
+      "value": "analyst"
+    },
+    {
+      "key": "analystPassword",
+      "value": "analyst"
+    },
+    {
+      "key": "adminUser",
+      "value": "admin"
+    },
+    {
+      "key": "adminPassword",
+      "value": "admin"
+    },
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "now",
+      "value": ""
+    },
+    {
+      "key": "customerRef",
+      "value": ""
+    },
+    {
+      "key": "accountRef",
+      "value": ""
+    },
+    {
+      "key": "alertRef",
+      "value": ""
+    },
+    {
+      "key": "caseRef",
+      "value": ""
+    },
+    {
+      "key": "alertTries",
+      "value": "0"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Dashboard summary (baseline)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/dashboard/summary",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "dashboard",
+            "summary"
+          ]
+        },
+        "description": "Headline counts before the walkthrough starts. Compare against step 26 at the end.",
+        "header": [],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('ok', () => pm.response.to.have.status(200));",
+              "pm.collectionVariables.set('runId', Date.now());",
+              "console.log('runId', pm.collectionVariables.get('runId'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Create a customer (PEP, KYC pending)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/customers",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "customers"
+          ]
+        },
+        "description": "Creates a customer and an opening account. Politically exposed adds +15 to every alert this customer later raises, and unverified KYC adds a further +10, so the same transaction scores higher for them than for an ordinary customer.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"firstName\": \"Meera\",\n  \"lastName\": \"Iyer\",\n  \"politicallyExposed\": true,\n  \"kycVerified\": false\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('customerRef', body.customerRef);",
+              "pm.collectionVariables.set('accountRef', body.accountRef);",
+              "pm.test('created HIGH risk', () => pm.expect(body.riskRating).to.eql('HIGH'));",
+              "pm.test('KYC pending', () => pm.expect(body.kycStatus).to.eql('PENDING'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Add a second account",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/customers/{{customerRef}}/accounts",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "customers",
+            "{{customerRef}}",
+            "accounts"
+          ]
+        },
+        "description": "A customer can hold several accounts. Account-scoped rules such as STRUCTURING look at one account; customer-scoped rules such as BEHAVIORAL_DEVIATION span all of them.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"accountType\": \"CURRENT\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('created', () => pm.response.to.have.status(201));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - A clean transaction (nothing should fire)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transactions"
+          ]
+        },
+        "description": "Small domestic deposit. No rule matches it. Note the response: a reference and a status, and nothing about alerts, because detection no longer runs in this request.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"txnRef\": \"PM-{{runId}}-CLEAN\",\n  \"accountRef\": \"{{accountRef}}\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 500,\n  \"currency\": \"INR\",\n  \"counterpartyName\": \"Counterparty\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"ONLINE\",\n  \"description\": \"Postman walkthrough\",\n  \"txnTimestamp\": \"{{now}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('accepted', () => pm.expect(body.status).to.eql('ACCEPTED'));",
+              "pm.test('ingestion reports no alerts, detection runs in the engine',",
+              "  () => pm.expect(body.alerts).to.be.undefined);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Structuring deposit 1 of 3",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transactions"
+          ]
+        },
+        "description": "9,400 sits just under the 10,000 reporting threshold. One on its own is not a pattern.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"txnRef\": \"PM-{{runId}}-S1\",\n  \"accountRef\": \"{{accountRef}}\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9400,\n  \"currency\": \"INR\",\n  \"counterpartyName\": \"Counterparty\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"ONLINE\",\n  \"description\": \"Postman walkthrough\",\n  \"txnTimestamp\": \"{{now}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('accepted', () => pm.expect(body.status).to.eql('ACCEPTED'));",
+              "pm.test('ingestion reports no alerts, detection runs in the engine',",
+              "  () => pm.expect(body.alerts).to.be.undefined);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - Structuring deposit 2 of 3",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transactions"
+          ]
+        },
+        "description": "Second deposit in the same 24-hour window. The rule needs three before it fires.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"txnRef\": \"PM-{{runId}}-S2\",\n  \"accountRef\": \"{{accountRef}}\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9600,\n  \"currency\": \"INR\",\n  \"counterpartyName\": \"Counterparty\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"ONLINE\",\n  \"description\": \"Postman walkthrough\",\n  \"txnTimestamp\": \"{{now}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('accepted', () => pm.expect(body.status).to.eql('ACCEPTED'));",
+              "pm.test('ingestion reports no alerts, detection runs in the engine',",
+              "  () => pm.expect(body.alerts).to.be.undefined);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 - Structuring deposit 3 of 3",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transactions"
+          ]
+        },
+        "description": "The third deposit completes the pattern. STRUCTURING fires when the engine evaluates it, not here. The response is identical to the two before it.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"txnRef\": \"PM-{{runId}}-S3\",\n  \"accountRef\": \"{{accountRef}}\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9800,\n  \"currency\": \"INR\",\n  \"counterpartyName\": \"Counterparty\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"ONLINE\",\n  \"description\": \"Postman walkthrough\",\n  \"txnTimestamp\": \"{{now}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('accepted', () => pm.expect(body.status).to.eql('ACCEPTED'));",
+              "pm.test('ingestion reports no alerts, detection runs in the engine',",
+              "  () => pm.expect(body.alerts).to.be.undefined);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 - Structuring deposit 4 (dedup, no second alert)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transactions"
+          ]
+        },
+        "description": "A fourth deposit in the same window updates the existing alert rather than raising a new one. The dedup key is rule, account and day, so one pattern yields one alert.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"txnRef\": \"PM-{{runId}}-S4\",\n  \"accountRef\": \"{{accountRef}}\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9700,\n  \"currency\": \"INR\",\n  \"counterpartyName\": \"Counterparty\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"ONLINE\",\n  \"description\": \"Postman walkthrough\",\n  \"txnTimestamp\": \"{{now}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('accepted', () => pm.expect(body.status).to.eql('ACCEPTED'));",
+              "pm.test('ingestion reports no alerts, detection runs in the engine',",
+              "  () => pm.expect(body.alerts).to.be.undefined);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 - High-risk jurisdiction (fires on any amount)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transactions"
+          ]
+        },
+        "description": "Counterparty in Iran. HIGH_RISK_JURISDICTION has no amount threshold, so this fires on 1 rupee as readily as on a million.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"txnRef\": \"PM-{{runId}}-JUR\",\n  \"accountRef\": \"{{accountRef}}\",\n  \"direction\": \"DEBIT\",\n  \"txnType\": \"TRANSFER\",\n  \"amount\": 90000,\n  \"currency\": \"INR\",\n  \"counterpartyName\": \"Counterparty\",\n  \"counterpartyCountry\": \"IR\",\n  \"channel\": \"ONLINE\",\n  \"description\": \"Postman walkthrough\",\n  \"txnTimestamp\": \"{{now}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('accepted', () => pm.expect(body.status).to.eql('ACCEPTED'));",
+              "pm.test('ingestion reports no alerts, detection runs in the engine',",
+              "  () => pm.expect(body.alerts).to.be.undefined);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 - Large transaction (CTR threshold)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transactions"
+          ]
+        },
+        "description": "At or above 10,000 in base currency, CTR_THRESHOLD fires. The counterparty is domestic, so this transaction trips that one rule and no others.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"txnRef\": \"PM-{{runId}}-CTR\",\n  \"accountRef\": \"{{accountRef}}\",\n  \"direction\": \"DEBIT\",\n  \"txnType\": \"TRANSFER\",\n  \"amount\": 250000,\n  \"currency\": \"INR\",\n  \"counterpartyName\": \"Counterparty\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"ONLINE\",\n  \"description\": \"Postman walkthrough\",\n  \"txnTimestamp\": \"{{now}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('accepted', () => pm.expect(body.status).to.eql('ACCEPTED'));",
+              "pm.test('ingestion reports no alerts, detection runs in the engine',",
+              "  () => pm.expect(body.alerts).to.be.undefined);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 - Alert queue as ANALYST (names masked)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/alerts?size=100",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "alerts"
+          ],
+          "query": [
+            {
+              "key": "size",
+              "value": "100"
+            }
+          ]
+        },
+        "description": "Highest risk first. Customer names are masked to a first name and a surname initial. Detection is asynchronous, so if the alerts from the steps above are missing, the engine has not consumed their change events yet. Wait a second and send again.",
+        "header": [],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Detection is asynchronous. Pause so the change event can reach the engine",
+              "// before the queue is read. Postman has no sleep, hence the wait loop.",
+              "const until = Date.now() + 1500;",
+              "while (Date.now() < until) { /* wait */ }"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "const mine = body.filter(a => a.customerRef === pm.collectionVariables.get('customerRef'));",
+              "const tries = Number(pm.collectionVariables.get('alertTries') || 0);",
+              "",
+              "// The engine may not have caught up. Re-send this request rather than failing.",
+              "if (mine.length === 0 && tries < 8) {",
+              "  pm.collectionVariables.set('alertTries', tries + 1);",
+              "  console.log(`no alerts yet, retry ${tries + 1} of 8`);",
+              "  postman.setNextRequest('11 - Alert queue as ANALYST (names masked)');",
+              "} else {",
+              "  pm.collectionVariables.set('alertTries', 0);",
+              "  if (mine.length) { pm.collectionVariables.set('alertRef', mine[0].alertRef); }",
+              "  console.log('alerts for this customer:', mine.map(a => `${a.ruleCode} ${a.riskScore}`).join(', '));",
+              "  pm.test('names are masked', () => mine.forEach(a =>",
+              "    pm.expect(a.customerName).to.match(/^\\S+ \\S\\.$|^\\S+$/)));",
+              "  pm.test('the engine raised alerts for this customer',",
+              "    () => pm.expect(mine.length).to.be.above(0));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "12 - Alert detail as ANALYST (still masked)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/alerts/{{alertRef}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "alerts",
+            "{{alertRef}}"
+          ]
+        },
+        "description": "The same masking applies to the detail view. Masking happens on the server, so the real surname never reaches the client.",
+        "header": [],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "console.log('explanation:', body.explanation);",
+              "pm.test('evidence is attached', () => pm.expect(body.evidence).to.be.an('array').that.is.not.empty);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "13 - Alert detail as ADMIN (unmasked)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/alerts/{{alertRef}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "alerts",
+            "{{alertRef}}"
+          ]
+        },
+        "description": "The same URL as step 12. Only the role differs, and the full customer name comes back.",
+        "header": [],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('full name for admin', () => pm.expect(body.customerName).to.include('Meera'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "14 - RBAC: analyst cannot ingest",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "transactions"
+          ]
+        },
+        "description": "Ingestion is ADMIN only. Role checks run at the API layer, not only in the UI.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"txnRef\": \"PM-{{runId}}-DENIED\",\n  \"accountRef\": \"{{accountRef}}\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 100,\n  \"currency\": \"INR\",\n  \"counterpartyName\": \"Counterparty\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"ONLINE\",\n  \"description\": \"Postman walkthrough\",\n  \"txnTimestamp\": \"{{now}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('forbidden', () => pm.response.to.have.status(403));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "15 - RBAC: analyst cannot create customers",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/customers",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "customers"
+          ]
+        },
+        "description": "Creating customers is ADMIN only as well.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"firstName\": \"Not\",\n  \"lastName\": \"Allowed\",\n  \"politicallyExposed\": false,\n  \"kycVerified\": true\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('forbidden', () => pm.response.to.have.status(403));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "16 - Customer transaction timeline",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/dashboard/customers/{{customerRef}}/transactions",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "dashboard",
+            "customers",
+            "{{customerRef}}",
+            "transactions"
+          ]
+        },
+        "description": "Every transaction for the customer, newest first, across all of their accounts.",
+        "header": [],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('timeline returned', () => pm.expect(pm.response.json()).to.be.an('array').that.is.not.empty);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "17 - Customer list",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/dashboard/customers",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "dashboard",
+            "customers"
+          ]
+        },
+        "description": "Customers with their account, transaction and alert counts, for the dashboard list.",
+        "header": [],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('ok', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "18 - Async path: publish to Kafka",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/ingestion/transactions/publish",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "ingestion",
+            "transactions",
+            "publish"
+          ]
+        },
+        "description": "Publishes onto the topic sentinel.transactions instead of ingesting inline, and returns 202. Registered only when SENTINEL_KAFKA_ENABLED is true, so expect 404 when it is off. This is a different topic from the Debezium change events the engine consumes.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "[\n  {\n    \"txnRef\": \"PM-{{runId}}-KAFKA\",\n    \"accountRef\": \"{{accountRef}}\",\n    \"direction\": \"CREDIT\",\n    \"txnType\": \"CASH_DEPOSIT\",\n    \"amount\": 15000,\n    \"currency\": \"INR\",\n    \"counterpartyName\": \"Counterparty\",\n    \"counterpartyCountry\": \"IN\",\n    \"channel\": \"ONLINE\",\n    \"description\": \"Postman walkthrough\",\n    \"txnTimestamp\": \"{{now}}\"\n  }\n]",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('queued or disabled', () => pm.expect([202, 404]).to.include(pm.response.code));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "19 - Open a case from the alert",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/cases",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "cases"
+          ]
+        },
+        "description": "Bundles alerts into one investigation. The alerts move to IN_REVIEW, and the actor on the audit row is taken from the credentials, never from the request body. Every alert must belong to the same customer.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"alertRefs\": [\n    \"{{alertRef}}\"\n  ],\n  \"priority\": \"HIGH\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('caseRef', body.caseRef);",
+              "pm.test('case opened', () => pm.expect(body.status).to.eql('OPEN'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "20 - Assign the case",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/cases/{{caseRef}}/assignment?assignee=meera",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "cases",
+            "{{caseRef}}",
+            "assignment"
+          ],
+          "query": [
+            {
+              "key": "assignee",
+              "value": "meera"
+            }
+          ]
+        },
+        "description": "The assignee is a query parameter. Assigning moves the case to IN_REVIEW.",
+        "header": [],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('in review', () => pm.expect(pm.response.json().status).to.eql('IN_REVIEW'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "21 - Dispose the case as a SAR escalation",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/cases/{{caseRef}}/disposition",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "cases",
+            "{{caseRef}}",
+            "disposition"
+          ]
+        },
+        "description": "The single decision for the investigation. The reason is mandatory, because a disposition without one is not auditable, and it is copied onto every alert the case bundles. Sending this twice is refused: a decision is final.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"disposition\": \"ESCALATED_TO_SAR\",\n  \"reason\": \"Structuring pattern on a politically exposed customer\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.test('escalated', () => pm.expect(body.status).to.eql('ESCALATED_TO_SAR'));",
+              "pm.test('analyst recorded', () => pm.expect(body.disposedBy).to.eql(pm.collectionVariables.get('analystUser')));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "22 - Re-deciding is refused",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/cases/{{caseRef}}/disposition",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "cases",
+            "{{caseRef}}",
+            "disposition"
+          ]
+        },
+        "description": "The same call again. Re-deciding would overwrite the analyst on record, so the service rejects it with a validation error.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"disposition\": \"CLEARED\",\n  \"reason\": \"second attempt\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('refused', () => pm.expect(pm.response.code).to.eql(400));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "23 - Immutable audit trail",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/cases/{{caseRef}}/audit",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "cases",
+            "{{caseRef}}",
+            "audit"
+          ]
+        },
+        "description": "Every transition for the case and for each alert it bundles, oldest first, with the actor and the reason. A database trigger rejects any update or delete on this table.",
+        "header": [],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "body.forEach(e => console.log(`${e.entityType} ${e.entityRef} ${e.fromStatus || '-'} -> ${e.toStatus} by ${e.actor}`));",
+              "pm.test('trail covers case and alerts',",
+              "  () => pm.expect(body.map(e => e.entityType)).to.include.members(['CASE', 'ALERT']));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "24 - The alert still exists after disposal",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/alerts/{{alertRef}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "alerts",
+            "{{alertRef}}"
+          ]
+        },
+        "description": "Nothing is ever deleted. The alert is still here, now ESCALATED. A system that deleted it would have destroyed the evidence that anyone ever looked.",
+        "header": [],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('escalated, not gone', () => pm.expect(pm.response.json().status).to.eql('ESCALATED'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "25 - Case list",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/cases?size=50",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "cases"
+          ],
+          "query": [
+            {
+              "key": "size",
+              "value": "50"
+            }
+          ]
+        },
+        "description": "The investigation queue, newest first, optionally narrowed by status.",
+        "header": [],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{analystUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{analystPassword}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('ok', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "26 - No credentials",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/alerts",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "alerts"
+          ]
+        },
+        "description": "Every endpoint needs authentication. Without it the API answers 401.",
+        "header": []
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('unauthorized', () => pm.response.to.have.status(401));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "27 - Dashboard summary (after)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/dashboard/summary",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "dashboard",
+            "summary"
+          ]
+        },
+        "description": "Compare with step 01: more transactions, and the alerts the engine raised along the way.",
+        "header": [],
+        "auth": {
+          "type": "basic",
+          "basic": [
+            {
+              "key": "username",
+              "value": "{{adminUser}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{adminPassword}}",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const body = pm.response.json();",
+              "console.log('alerts by rule:', JSON.stringify(body.alertsByRule));",
+              "pm.test('ok', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

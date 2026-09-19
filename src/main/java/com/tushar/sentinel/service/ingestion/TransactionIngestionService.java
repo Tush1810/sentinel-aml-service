@@ -2,12 +2,13 @@ package com.tushar.sentinel.service.ingestion;
 
 import com.tushar.sentinel.exception.ResourceNotFoundException;
 import com.tushar.sentinel.exception.ValidationException;
-import com.tushar.sentinel.model.response.ingestion.BatchResult;
 import com.tushar.sentinel.model.response.alert.AlertSummary;
+import com.tushar.sentinel.model.response.ingestion.BatchResult;
 import com.tushar.sentinel.model.response.ingestion.IngestResult;
 import com.tushar.sentinel.model.response.ingestion.RowError;
 import com.tushar.sentinel.repository.account.Account;
 import com.tushar.sentinel.repository.account.AccountRepository;
+import com.tushar.sentinel.repository.alert.Alert;
 import com.tushar.sentinel.repository.txn.Transaction;
 import com.tushar.sentinel.repository.txn.TransactionRepository;
 import com.tushar.sentinel.repository.txn.TxnDirection;
@@ -15,7 +16,6 @@ import com.tushar.sentinel.repository.txn.TxnType;
 import com.tushar.sentinel.service.ExchangeRateService;
 import com.tushar.sentinel.service.detection.DetectionEngine;
 import java.io.InputStream;
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -37,7 +37,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class TransactionIngestionService {
 
     private static final Logger log = LoggerFactory.getLogger(TransactionIngestionService.class);
-    private static final int HEADER_OFFSET = 2;
 
     private final TransactionRepository transactionRepository;
     private final AccountRepository accountRepository;
@@ -58,27 +57,24 @@ public class TransactionIngestionService {
     /** Incremental path: one transaction, rejected outright if invalid. */
     @Transactional
     public IngestResult ingestOne(IngestTransactionCommand command) {
-        Transaction saved = transactionRepository.save(toTransaction(command));
-        List<AlertSummary> alerts = detectionEngine.evaluate(saved).stream()
-                .map(AlertSummary::from)
-                .toList();
+        List<AlertSummary> alerts = ingest(command).stream().map(AlertSummary::from).toList();
         log.debug("Ingested transaction {} on account {}; alerts={}",
-                saved.getTxnRef(), command.accountRef(), alerts.size());
-        return new IngestResult(saved.getTxnRef(), "ACCEPTED", alerts);
+                command.txnRef(), command.accountRef(), alerts.size());
+        return new IngestResult(command.txnRef(), "ACCEPTED", alerts);
     }
 
-    /** Bulk path: best-effort, so one bad record cannot block the rest of the file. */
+    /** Bulk path: best-effort, so one bad record cannot block the rest of the payload. */
     @Transactional
     public BatchResult ingestBatch(List<IngestTransactionCommand> commands) {
         long startedAt = System.currentTimeMillis();
-        String batchId = "ING-TXN-" + UUID.randomUUID().toString().substring(0, 8);
+        String batchId = "ING-TRANSACTION-" + UUID.randomUUID().toString().substring(0, 8);
         List<RowError> errors = new ArrayList<>();
         int accepted = 0;
 
         for (int i = 0; i < commands.size(); i++) {
             IngestTransactionCommand command = commands.get(i);
             try {
-                detectionEngine.evaluate(transactionRepository.save(toTransaction(command)));
+                ingest(command);
                 accepted++;
             } catch (RuntimeException e) {
                 errors.add(new RowError(i + 1, command.txnRef(), null, e.getMessage()));
@@ -93,23 +89,15 @@ public class TransactionIngestionService {
     @Transactional
     public BatchResult ingestCsv(InputStream inputStream) {
         CsvFile csv = new CsvFile(inputStream);
-        List<RowError> errors = new ArrayList<>();
-        List<IngestTransactionCommand> commands = new ArrayList<>();
+        BatchResult result = csv.load("TRANSACTION", "txn_id", row -> ingest(toCommand(csv, row)));
 
-        for (int i = 0; i < csv.rows().size(); i++) {
-            String[] row = csv.rows().get(i);
-            try {
-                commands.add(toCommand(csv, row));
-            } catch (RuntimeException e) {
-                errors.add(new RowError(i + HEADER_OFFSET, csv.get(row, "txn_id"), null, e.getMessage()));
-            }
-        }
+        log.info("Ingested transactions batch {}; accepted={} rejected={}",
+                result.batchId(), result.accepted(), result.rejected());
+        return result;
+    }
 
-        BatchResult result = ingestBatch(commands);
-        List<RowError> allErrors = new ArrayList<>(errors);
-        allErrors.addAll(result.errors());
-        return new BatchResult(result.batchId(), "TRANSACTION", csv.rows().size(), result.accepted(),
-                allErrors.size(), result.durationMs(), allErrors);
+    private List<Alert> ingest(IngestTransactionCommand command) {
+        return detectionEngine.evaluate(transactionRepository.save(toTransaction(command)));
     }
 
     private Transaction toTransaction(IngestTransactionCommand command) {
@@ -120,8 +108,6 @@ public class TransactionIngestionService {
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Account " + command.accountRef() + " does not exist"));
 
-        BigDecimal rate = exchangeRateService.rateFor(command.currency());
-
         Transaction transaction = new Transaction();
         transaction.setTxnRef(command.txnRef());
         transaction.setAccount(account);
@@ -130,7 +116,7 @@ public class TransactionIngestionService {
         transaction.setAmount(command.amount());
         transaction.setCurrency(command.currency().toUpperCase());
         transaction.setAmountBase(exchangeRateService.toBaseCurrency(command.amount(), command.currency()));
-        transaction.setExchangeRate(rate);
+        transaction.setExchangeRate(exchangeRateService.rateFor(command.currency()));
         transaction.setCounterpartyName(command.counterpartyName());
         transaction.setCounterpartyAccount(command.counterpartyAccount());
         transaction.setCounterpartyBank(command.counterpartyBank());

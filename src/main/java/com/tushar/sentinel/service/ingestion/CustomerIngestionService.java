@@ -1,15 +1,12 @@
 package com.tushar.sentinel.service.ingestion;
 
+import com.tushar.sentinel.exception.ValidationException;
 import com.tushar.sentinel.model.response.ingestion.BatchResult;
-import com.tushar.sentinel.model.response.ingestion.RowError;
 import com.tushar.sentinel.repository.customer.Customer;
 import com.tushar.sentinel.repository.customer.CustomerRepository;
 import com.tushar.sentinel.repository.customer.KycStatus;
 import com.tushar.sentinel.repository.customer.RiskRating;
 import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -20,7 +17,6 @@ import org.springframework.transaction.annotation.Transactional;
 public class CustomerIngestionService {
 
     private static final Logger log = LoggerFactory.getLogger(CustomerIngestionService.class);
-    private static final int HEADER_OFFSET = 2;
 
     private final CustomerRepository customerRepository;
 
@@ -30,35 +26,21 @@ public class CustomerIngestionService {
 
     @Transactional
     public BatchResult ingestCsv(InputStream inputStream) {
-        long startedAt = System.currentTimeMillis();
-        String batchId = "ING-CUST-" + UUID.randomUUID().toString().substring(0, 8);
         CsvFile csv = new CsvFile(inputStream);
-        List<RowError> errors = new ArrayList<>();
-        int accepted = 0;
-
-        for (int i = 0; i < csv.rows().size(); i++) {
-            String[] row = csv.rows().get(i);
-            int rowNumber = i + HEADER_OFFSET;
+        BatchResult result = csv.load("CUSTOMER", "customer_id", row -> {
             String customerRef = csv.get(row, "customer_id");
-            try {
-                if (customerRef == null) {
-                    errors.add(new RowError(rowNumber, null, "customer_id", "Missing customer reference"));
-                    continue;
-                }
-                if (customerRepository.existsByCustomerRef(customerRef)) {
-                    errors.add(new RowError(rowNumber, customerRef, "customer_id", "Already ingested"));
-                    continue;
-                }
-                customerRepository.save(toCustomer(csv, row, customerRef));
-                accepted++;
-            } catch (RuntimeException e) {
-                errors.add(new RowError(rowNumber, customerRef, null, e.getMessage()));
+            if (customerRef == null) {
+                throw new ValidationException("Missing customer reference");
             }
-        }
+            if (customerRepository.existsByCustomerRef(customerRef)) {
+                throw new ValidationException("Customer " + customerRef + " already ingested");
+            }
+            customerRepository.save(toCustomer(csv, row, customerRef));
+        });
 
-        log.info("Ingested customers batch {}; accepted={} rejected={}", batchId, accepted, errors.size());
-        return new BatchResult(batchId, "CUSTOMER", csv.rows().size(), accepted, errors.size(),
-                System.currentTimeMillis() - startedAt, errors);
+        log.info("Ingested customers batch {}; accepted={} rejected={}",
+                result.batchId(), result.accepted(), result.rejected());
+        return result;
     }
 
     private Customer toCustomer(CsvFile csv, String[] row, String customerRef) {

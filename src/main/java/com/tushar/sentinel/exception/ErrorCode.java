@@ -10,15 +10,9 @@ public enum ErrorCode {
     ENTITY_NOT_FOUND(4041),
     INTERNAL_ERROR(5001);
 
-    private static final int MIN_CODE = 1000;
-    private static final int MAX_CODE = 9999;
-
     private final int code;
 
     ErrorCode(int code) {
-        if (code < MIN_CODE || code > MAX_CODE) {
-            throw new IllegalArgumentException("Error code must be between " + MIN_CODE + " and " + MAX_CODE);
-        }
         this.code = code;
     }
 

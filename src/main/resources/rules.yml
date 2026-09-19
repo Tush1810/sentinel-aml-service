@@ -60,5 +60,5 @@ sentinel:
       window-hours: 24
       baseline-days: 90
       min-baseline-txns: 5
-      threshold: 3
+      threshold: 10
       explanation: "Customer {customer} moved {actual} in 24 hours against a {baselineDays}-day daily average of {average}, exceeding {multiplier}x."

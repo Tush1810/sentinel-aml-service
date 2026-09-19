@@ -36,6 +36,10 @@
     {
       "key": "runId",
       "value": ""
+    },
+    {
+      "key": "demoDate",
+      "value": ""
     }
   ],
   "item": [
@@ -203,7 +207,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"txnRef\": \"DEMO_1_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9500,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"2026-09-26T06:00:00Z\"\n}",
+          "raw": "{\n  \"txnRef\": \"DEMO_1_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9500,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"{{demoDate}}T06:00:00Z\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -251,7 +255,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"txnRef\": \"DEMO_2_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9700,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"2026-09-26T09:00:00Z\"\n}",
+          "raw": "{\n  \"txnRef\": \"DEMO_2_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9700,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"{{demoDate}}T09:00:00Z\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -299,7 +303,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"txnRef\": \"DEMO_3_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9200,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"2026-09-26T12:00:00Z\"\n}",
+          "raw": "{\n  \"txnRef\": \"DEMO_3_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9200,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"{{demoDate}}T12:00:00Z\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -363,7 +367,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"txnRef\": \"DEMO_4_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9900,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"2026-09-26T14:00:00Z\"\n}",
+          "raw": "{\n  \"txnRef\": \"DEMO_4_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"CASH_DEPOSIT\",\n  \"amount\": 9900,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"{{demoDate}}T14:00:00Z\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -411,7 +415,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"txnRef\": \"DEMO_5_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"DEBIT\",\n  \"txnType\": \"WIRE\",\n  \"amount\": 5000,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"AE\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"2026-09-26T15:00:00Z\"\n}",
+          "raw": "{\n  \"txnRef\": \"DEMO_5_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"DEBIT\",\n  \"txnType\": \"WIRE\",\n  \"amount\": 5000,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"AE\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"{{demoDate}}T15:00:00Z\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -459,7 +463,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"txnRef\": \"DEMO_6_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"DEBIT\",\n  \"txnType\": \"TRANSFER\",\n  \"amount\": 30000,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"2026-09-26T16:00:00Z\"\n}",
+          "raw": "{\n  \"txnRef\": \"DEMO_6_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"DEBIT\",\n  \"txnType\": \"TRANSFER\",\n  \"amount\": 30000,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"{{demoDate}}T16:00:00Z\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -617,7 +621,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"txnRef\": \"DEMO_X_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"DEPOSIT\",\n  \"amount\": 100,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"2026-09-26T17:00:00Z\"\n}",
+          "raw": "{\n  \"txnRef\": \"DEMO_X_{{runId}}\",\n  \"accountRef\": \"ACC_000001\",\n  \"direction\": \"CREDIT\",\n  \"txnType\": \"DEPOSIT\",\n  \"amount\": 100,\n  \"currency\": \"INR\",\n  \"counterpartyCountry\": \"IN\",\n  \"channel\": \"BRANCH\",\n  \"txnTimestamp\": \"{{demoDate}}T17:00:00Z\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -715,7 +719,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "[\n  {\n    \"txnRef\": \"DEMO_K1_{{runId}}\",\n    \"accountRef\": \"ACC_000002\",\n    \"direction\": \"CREDIT\",\n    \"txnType\": \"CASH_DEPOSIT\",\n    \"amount\": 9600,\n    \"currency\": \"INR\",\n    \"counterpartyCountry\": \"IN\",\n    \"channel\": \"BRANCH\",\n    \"txnTimestamp\": \"2026-09-26T18:00:00Z\"\n  }\n]",
+          "raw": "[\n  {\n    \"txnRef\": \"DEMO_K1_{{runId}}\",\n    \"accountRef\": \"ACC_000002\",\n    \"direction\": \"CREDIT\",\n    \"txnType\": \"CASH_DEPOSIT\",\n    \"amount\": 9600,\n    \"currency\": \"INR\",\n    \"counterpartyCountry\": \"IN\",\n    \"channel\": \"BRANCH\",\n    \"txnTimestamp\": \"{{demoDate}}T18:00:00Z\"\n  }\n]",
           "options": {
             "raw": {
               "language": "json"
@@ -1093,9 +1097,15 @@
       "script": {
         "type": "text/javascript",
         "exec": [
-          "// One id per run so transaction references stay unique and the demo can be replayed.",
+          "// Every run needs its own calendar day, not just its own references. Deposits from an",
+          "// earlier run sitting in the same 24h window complete the structuring pattern before",
+          "// the demo starts, so the first deposit would already fire.",
           "if (!pm.collectionVariables.get('runId')) {",
-          "    pm.collectionVariables.set('runId', Date.now().toString().slice(-6));",
+          "    const runId = Date.now().toString().slice(-6);",
+          "    pm.collectionVariables.set('runId', runId);",
+          "    const offsetDays = 30 + (parseInt(runId, 10) % 900);",
+          "    const day = new Date(Date.now() + offsetDays * 86400000);",
+          "    pm.collectionVariables.set('demoDate', day.toISOString().slice(0, 10));",
           "}"
         ]
       }

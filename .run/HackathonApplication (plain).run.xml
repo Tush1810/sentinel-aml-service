@@ -1,7 +1,7 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="HackathonApplication (plain)" type="Application" factoryName="Application">
-    <option name="MAIN_CLASS_NAME" value="com.tushar.hackathon.HackathonApplication" />
-    <module name="hackathon-backend" />
+  <configuration default="false" name="SentinelApplication (plain)" type="Application" factoryName="Application">
+    <option name="MAIN_CLASS_NAME" value="com.tushar.sentinel.SentinelApplication" />
+    <module name="sentinel-aml-service" />
     <method v="2">
       <option name="Make" enabled="true" />
     </method>

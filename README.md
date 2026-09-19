@@ -153,7 +153,7 @@ by Spring Boot's standard Kafka autoconfiguration property, though it is not one
 mvn clean package
 mvn spring-boot:run
 # or
-java -jar target/hackathon-backend-1.0.0.jar
+java -jar target/sentinel-aml-service-1.0.0.jar
 ```
 
 The app listens on port **8081**. Interactive API documentation (springdoc) is served

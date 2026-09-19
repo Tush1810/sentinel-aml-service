@@ -1,8 +1,8 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="SentinelApplication" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot" nameIsGenerated="true">
+  <configuration default="false" name="HackathonApplication" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot" nameIsGenerated="true">
     <option name="FRAME_DEACTIVATION_UPDATE_POLICY" value="UpdateClassesAndResources" />
-    <module name="sentinel-aml-service" />
-    <option name="SPRING_BOOT_MAIN_CLASS" value="com.tushar.sentinel.SentinelApplication" />
+    <module name="hackathon-backend" />
+    <option name="SPRING_BOOT_MAIN_CLASS" value="com.tushar.hackathon.HackathonApplication" />
     <option name="ALTERNATIVE_JRE_PATH_ENABLED" value="false" />
     <method v="2">
       <option name="Make" enabled="true" />

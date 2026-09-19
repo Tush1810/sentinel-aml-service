@@ -6,6 +6,7 @@ import com.tushar.hackathon.repository.alert.AlertRepository;
 import com.tushar.hackathon.repository.alert.AlertStatus;
 import java.util.List;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.security.core.Authentication;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -40,10 +41,13 @@ public class AlertResource {
                 .toList();
     }
 
+    /** Full customer detail is restricted to ADMIN; an analyst still sees the masked name. */
     @GetMapping("/{alertRef}")
-    public AlertView detail(@PathVariable String alertRef) {
+    public AlertView detail(@PathVariable String alertRef, Authentication authentication) {
+        boolean unmask = authentication.getAuthorities().stream()
+                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
         return alertRepository.findByAlertRef(alertRef)
-                .map(AlertView::full)
+                .map(unmask ? AlertView::full : AlertView::masked)
                 .orElseThrow(() -> new ResourceNotFoundException("Alert " + alertRef + " does not exist"));
     }
 }

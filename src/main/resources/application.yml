@@ -40,6 +40,10 @@ logging:
     com.tushar.hackathon: DEBUG
 
 sentinel:
+  security:
+    analyst-password: ${SENTINEL_ANALYST_PASSWORD:analyst}
+    admin-password: ${SENTINEL_ADMIN_PASSWORD:admin}
+
   currency:
     base: INR
     rates:

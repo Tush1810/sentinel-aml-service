@@ -1,5 +1,11 @@
 # Sentinel AML
 
+## Demo
+
+<video src="https://github.com/Tush1810/sentinel-aml-service/raw/main/docs/sentinel-demo.mp4" controls width="100%"></video>
+
+If the player does not load, [open the recording](docs/sentinel-demo.mp4) directly.
+
 ## 1. What this service does
 
 Sentinel is an AML (anti-money-laundering) transaction monitoring prototype. This service
